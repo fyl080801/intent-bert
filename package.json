@@ -1,0 +1,42 @@
+{
+  "name": "financial-intent-bert",
+  "version": "1.0.0",
+  "description": "金融意图BERT分类系统",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "train:model": "./venv/bin/python lib/python/train.py --train_data datasets/financial_intent_dataset.csv --val_data datasets/financial_intent_validation.csv --output_dir models",
+    "predict": "./venv/bin/python lib/python/predict.py --model_path models --interactive",
+    "serve:model": "./venv/bin/python lib/python/model_server.py",
+    "test:model": "./venv/bin/python lib/python/predict.py --model_path models",
+    "prepublishOnly": "tsc"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/cors": "^2.8.13",
+    "@types/express": "^4.17.17",
+    "@types/node": "^18.16.0",
+    "nyc": "^15.0.0",
+    "source-map-support": "^0.5.16",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@alicloud/credentials": "^2.4.4",
+    "@alicloud/nlp-automl20191111": "1.0.4",
+    "@alicloud/openapi-client": "^0.4.15",
+    "@alicloud/tea-typescript": "^1.7.1",
+    "@alicloud/tea-util": "^1.4.9",
+    "axios": "^1.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2"
+  },
+  "files": [
+    "dist",
+    "src"
+  ]
+}

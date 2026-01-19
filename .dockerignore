@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist-python/
+build/
+
+# Node
+node_modules/
+npm-debug.log
+dist/
+*.log
+
+# 数据和模型
+datasets/financial_intent_*.csv
+datasets/dataset_labels_info.json
+models/checkpoint-*/
+models/logs/
+models/*.pt
+models/*.bin
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docs
+README.md
+docs/
+
+# Test
+test/
+*.test.js
+*.test.ts
+
+# Misc
+.DS_Store
+*.bak
+.env.local

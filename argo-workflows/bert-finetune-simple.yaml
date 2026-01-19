@@ -1,0 +1,143 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: bert-finetune-simple
+  namespace: default
+  labels:
+    app: bert-finetune
+    project: financial-intent-classification
+  annotations:
+    description: "BERT微调简化工作流 - 快速测试和开发"
+spec:
+  # 工作流执行超时（1小时）
+  activeDeadlineSeconds: 3600
+
+  entrypoint: train-bert-model
+
+  arguments:
+    parameters:
+      - name: train_data_path
+        value: "datasets/financial_intent_dataset.csv"
+      - name: val_data_path
+        value: "datasets/financial_intent_validation.csv"
+      - name: model_name
+        value: "bert-base-chinese"
+      - name: output_dir
+        value: "/app/models"
+      - name: batch_size
+        value: "16"
+      - name: num_epochs
+        value: "3"
+      - name: learning_rate
+        value: "2e-5"
+      - name: host_model_path
+        value: "/mnt/models/bert-finetune"
+
+  templates:
+    # ==================== BERT模型训练（简化版）====================
+    - name: train-bert-model
+      inputs:
+        parameters:
+          - name: train_data_path
+          - name: val_data_path
+          - name: model_name
+          - name: output_dir
+          - name: batch_size
+          - name: num_epochs
+          - name: learning_rate
+
+      # 使用 hostPath 挂载节点本地路径
+      volumes:
+        - name: host-models
+          hostPath:
+            path: "{{workflow.parameters.host_model_path}}"
+            type: DirectoryOrCreate
+
+      # 使用 init 容器准备数据
+      initContainers:
+        - name: prepare-data
+          image: alpine:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "准备数据目录..."
+              mkdir -p /app/datasets
+              mkdir -p /app/models
+
+              # 这里可以从 ConfigMap、Secret、或其他来源复制数据
+              # 示例：从 PVC 复制数据
+              # cp /data/*.csv /app/datasets/
+
+              echo "数据目录准备完成"
+          volumeMounts:
+            - name: workspace
+              mountPath: /app
+
+      container:
+        image: python:3.10-slim
+        command: [bash, -c]
+        args:
+          - |
+            set -e
+            echo "安装依赖..."
+
+            # 安装 Python 依赖
+            pip install --no-cache-dir \
+              torch>=2.0.0 \
+              transformers>=4.30.0 \
+              pandas>=2.0.0 \
+              numpy>=1.24.0 \
+              scikit-learn>=1.3.0
+
+            echo "依赖安装完成"
+
+            # 假设数据和代码已经通过 volume 挂载
+            # 如果使用 Git，可以在这里 clone
+            # git clone https://github.com/your-org/bert-aliyun-test.git /app
+
+            echo "开始训练..."
+            python3 lib/python/train.py \
+              --train_data {{inputs.parameters.train_data_path}} \
+              --val_data {{inputs.parameters.val_data_path}} \
+              --model_name {{inputs.parameters.model_name}} \
+              --output_dir {{inputs.parameters.output_dir}} \
+              --batch_size {{inputs.parameters.batch_size}} \
+              --num_epochs {{inputs.parameters.num_epochs}} \
+              --learning_rate {{inputs.parameters.learning_rate}}
+
+            echo "训练完成！"
+
+            # 列出生成的文件
+            echo "模型文件列表："
+            ls -lh {{inputs.parameters.output_dir}}/
+
+        env:
+          - name: PYTHONPATH
+            value: "/app/lib/python"
+          - name: CUDA_VISIBLE_DEVICES
+            value: ""  # 空字符串表示使用 CPU
+
+        volumeMounts:
+          - name: host-models
+            mountPath: "/app/models"
+          - name: workspace
+            mountPath: /app
+
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+
+  # 定义 volumes
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

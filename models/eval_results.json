@@ -1,0 +1,19 @@
+{
+  "eval_level1_accuracy": 1.0,
+  "eval_level1_f1": 1.0,
+  "eval_level1_precision": 1.0,
+  "eval_level1_recall": 1.0,
+  "eval_level2_accuracy": 1.0,
+  "eval_level2_f1": 1.0,
+  "eval_level2_precision": 1.0,
+  "eval_level2_recall": 1.0,
+  "eval_level3_accuracy": 0.9766666666666667,
+  "eval_level3_f1": 0.97,
+  "eval_level3_precision": 0.9672222222222223,
+  "eval_level3_recall": 0.9766666666666667,
+  "eval_overall_accuracy": 0.9766666666666667,
+  "eval_runtime": 7.3134,
+  "eval_samples_per_second": 41.02,
+  "eval_steps_per_second": 2.598,
+  "epoch": 5.0
+}

@@ -1,0 +1,497 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: bert-finetune-workflow
+  namespace: default
+  labels:
+    app: bert-finetune
+    project: financial-intent-classification
+  annotations:
+    description: "BERT微调工作流 - 金融意图分类模型训练"
+spec:
+  # 工作流执行超时时间（2小时）
+  activeDeadlineSeconds: 7200
+  # 工作流重试策略
+  retryStrategy:
+    limit: 2
+    retryPolicy: "Always"
+
+  # 入口参数
+  entrypoint: bert-finetune-pipeline
+
+  # 全局参数定义
+  arguments:
+    parameters:
+      - name: train_data_path
+        value: "datasets/financial_intent_dataset.csv"
+      - name: val_data_path
+        value: "datasets/financial_intent_validation.csv"
+      - name: model_name
+        value: "bert-base-chinese"
+      - name: batch_size
+        value: "16"
+      - name: num_epochs
+        value: "5"
+      - name: learning_rate
+        value: "2e-5"
+      - name: max_length
+        value: "128"
+      - name: warmup_steps
+        value: "500"
+      - name: weight_decay
+        value: "0.01"
+      - name: host_model_path
+        value: "/mnt/models/bert-finetune"  # Node本地路径，用于持久化存储模型
+      - name: container_model_path
+        value: "/app/models"  # 容器内路径
+
+  # 卷模板定义
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace-volume
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+  # 工作流模板定义
+  templates:
+
+    # ==================== Docker镜像构建模板 ====================
+    - name: build-training-image
+      inputs:
+        artifacts:
+          - name: source-code
+            path: /src
+            git:
+              repo: https://github.com/your-org/bert-aliyun-test.git
+              revision: main
+              # 如果你使用私有仓库，需要配置secret
+              # sshPrivateKeySecret:
+              #   name: github-ssh-key
+              #   key: ssh-privatekey
+      outputs:
+        artifacts:
+          - name: image-tag
+            path: /tmp/image-tag.txt
+      container:
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - --context=/src
+          - --dockerfile=/src/Dockerfile
+          - --destination=registry.example.com/bert-finetune:latest
+          - --cache=true
+          - --cache-dir=/cache
+        volumeMounts:
+          - name: docker-cache
+            mountPath: /cache
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+
+    # ==================== 数据准备模板 ====================
+    - name: prepare-data
+      inputs:
+        artifacts:
+          - name: train-data
+            path: /data/datasets/financial_intent_dataset.csv
+            # 可以从各种来源获取数据：HTTP、S3、Git等
+            http:
+              url: "https://your-storage.com/datasets/financial_intent_dataset.csv"
+          - name: val-data
+            path: /data/datasets/financial_intent_validation.csv
+            http:
+              url: "https://your-storage.com/datasets/financial_intent_validation.csv"
+      outputs:
+        artifacts:
+          - name: prepared-data
+            path: /data
+      script:
+        image: python:3.10-slim
+        command: [python]
+        source: |
+          import os
+          import sys
+
+          print("开始数据准备...")
+
+          # 验证数据文件存在
+          train_path = "/data/datasets/financial_intent_dataset.csv"
+          val_path = "/data/datasets/financial_intent_validation.csv"
+
+          if not os.path.exists(train_path):
+              print(f"错误: 训练数据文件不存在: {train_path}")
+              sys.exit(1)
+
+          if not os.path.exists(val_path):
+              print(f"错误: 验证数据文件不存在: {val_path}")
+              sys.exit(1)
+
+          # 统计数据信息
+          import pandas as pd
+          train_df = pd.read_csv(train_path)
+          val_df = pd.read_csv(val_path)
+
+          print(f"训练集大小: {len(train_df)}")
+          print(f"验证集大小: {len(val_df)}")
+          print(f"列名: {train_df.columns.tolist()}")
+
+          # 检查必需列
+          required_columns = ['text', 'label_level1', 'label_level2', 'label_level3']
+          missing_columns = [col for col in required_columns if col not in train_df.columns]
+          if missing_columns:
+              print(f"错误: 数据集缺少必需列: {missing_columns}")
+              sys.exit(1)
+
+          print("数据准备完成！")
+        volumeMounts:
+          - name: workspace-volume
+            mountPath: /data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+    # ==================== BERT模型训练模板 ====================
+    - name: train-bert-model
+      inputs:
+        parameters:
+          - name: train_data_path
+          - name: val_data_path
+          - name: model_name
+          - name: batch_size
+          - name: num_epochs
+          - name: learning_rate
+          - name: max_length
+          - name: warmup_steps
+          - name: weight_decay
+          - name: container_model_path
+        artifacts:
+          - name: workspace
+            path: /app
+      # 使用 hostPath 挂载节点本地路径
+      volumes:
+        - name: host-models
+          hostPath:
+            path: "{{workflow.parameters.host_model_path}}"
+            type: DirectoryOrCreate
+      container:
+        image: registry.example.com/bert-finetune:latest
+        command: [python3]
+        args:
+          - "lib/python/train.py"
+          - "--train_data"
+          - "{{inputs.parameters.train_data_path}}"
+          - "--val_data"
+          - "{{inputs.parameters.val_data_path}}"
+          - "--model_name"
+          - "{{inputs.parameters.model_name}}"
+          - "--output_dir"
+          - "{{inputs.parameters.container_model_path}}"
+          - "--batch_size"
+          - "{{inputs.parameters.batch_size}}"
+          - "--num_epochs"
+          - "{{inputs.parameters.num_epochs}}"
+          - "--learning_rate"
+          - "{{inputs.parameters.learning_rate}}"
+          - "--max_length"
+          - "{{inputs.parameters.max_length}}"
+          - "--warmup_steps"
+          - "{{inputs.parameters.warmup_steps}}"
+          - "--weight_decay"
+          - "{{inputs.parameters.weight_decay}}"
+        env:
+          - name: CUDA_VISIBLE_DEVICES
+            value: "0"
+          - name: PYTHONPATH
+            value: "/app/lib/python"
+        volumeMounts:
+          - name: host-models
+            mountPath: "{{inputs.parameters.container_model_path}}"
+          - name: workspace-volume
+            mountPath: /app
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4000m"
+            # 如果有 GPU，添加 nvidia.com/gpu
+            # nvidia.com/gpu: "1"
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+            # nvidia.com/gpu: "1"
+
+    # ==================== 模型验证模板 ====================
+    - name: validate-model
+      inputs:
+        parameters:
+          - name: container_model_path
+        artifacts:
+          - name: workspace
+            path: /app
+      volumes:
+        - name: host-models
+          hostPath:
+            path: "{{workflow.parameters.host_model_path}}"
+            type: Directory
+      script:
+        image: registry.example.com/bert-finetune:latest
+        command: [python3]
+        source: |
+          import os
+          import json
+          import sys
+
+          model_path = "{{inputs.parameters.container_model_path}}"
+
+          print("开始模型验证...")
+
+          # 检查模型文件
+          required_files = [
+              "pytorch_model.bin",
+              "config.json",
+              "tokenizer.json",
+              "training_config.json",
+              "eval_results.json",
+              "label_encoders.json"
+          ]
+
+          missing_files = []
+          for file in required_files:
+              file_path = os.path.join(model_path, file)
+              if not os.path.exists(file_path):
+                  missing_files.append(file)
+              else:
+                  print(f"✓ 找到文件: {file}")
+
+          if missing_files:
+              print(f"\n错误: 缺少必需文件: {missing_files}")
+              sys.exit(1)
+
+          # 验证评估结果
+          eval_results_path = os.path.join(model_path, "eval_results.json")
+          with open(eval_results_path, 'r', encoding='utf-8') as f:
+              eval_results = json.load(f)
+
+          print("\n=== 模型评估结果 ===")
+          for key, value in eval_results.items():
+              if isinstance(value, float):
+                  print(f"{key}: {value:.4f}")
+              else:
+                  print(f"{key}: {value}")
+
+          # 检查整体准确率
+          overall_acc = eval_results.get('eval_overall_accuracy', 0)
+          if overall_acc < 0.7:
+              print(f"\n警告: 模型整体准确率较低 ({overall_acc:.4f})")
+              print("建议: 增加训练轮数或调整超参数")
+
+          # 检查模型文件大小
+          model_size = 0
+          for root, dirs, files in os.walk(model_path):
+              for file in files:
+                  file_path = os.path.join(root, file)
+                  if os.path.isfile(file_path):
+                      model_size += os.path.getsize(file_path)
+
+          model_size_mb = model_size / (1024 * 1024)
+          print(f"\n模型总大小: {model_size_mb:.2f} MB")
+
+          print("\n模型验证完成！")
+        volumeMounts:
+          - name: host-models
+            mountPath: "{{inputs.parameters.container_model_path}}"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+    # ==================== 模型导出模板 ====================
+    - name: export-model
+      inputs:
+        parameters:
+          - name: container_model_path
+          - name: host_model_path
+      outputs:
+        artifacts:
+          - name: trained-model
+            path: /tmp/model-export
+            s3:
+              endpoint: s3.amazonaws.com
+              bucket: your-model-bucket
+              key: "bert-finetune/{{workflow.uid}}/model"
+              accessKeySecret:
+                name: s3-credentials
+                key: accessKey
+              secretKeySecret:
+                name: s3-credentials
+                key: secretKey
+      volumes:
+        - name: host-models
+          hostPath:
+            path: "{{inputs.parameters.host_model_path}}"
+            type: Directory
+      container:
+        image: alpine:latest
+        command:
+          - sh
+          - -c
+          - |
+            echo "开始导出模型..."
+
+            # 创建导出目录
+            mkdir -p /tmp/model-export
+
+            # 复制模型文件
+            cp -r "{{inputs.parameters.container_model_path}}"/* /tmp/model-export/
+
+            # 创建模型元数据
+            cat > /tmp/model-export/metadata.json << EOF
+            {
+              "workflow_uid": "{{workflow.uid}}",
+              "workflow_name": "{{workflow.name}}",
+              "timestamp": "{{workflow.creationTimestamp}}",
+              "model_path": "{{inputs.parameters.host_model_path}}",
+              "export_time": "$(date -Iseconds)"
+            }
+            EOF
+
+            # 列出导出的文件
+            echo "导出的文件:"
+            ls -lh /tmp/model-export/
+
+            echo "模型导出完成！"
+        volumeMounts:
+          - name: host-models
+            mountPath: "{{inputs.parameters.container_model_path}}"
+            readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+    # ==================== 清理模板 ====================
+    - name: cleanup
+      inputs:
+        parameters:
+          - name: container_model_path
+      container:
+        image: alpine:latest
+        command:
+          - sh
+          - -c
+          - |
+            echo "清理临时文件..."
+
+            # 清理日志文件（保留关键文件）
+            find "{{inputs.parameters.container_model_path}}/logs" -name "*.log" -mtime +7 -delete 2>/dev/null || true
+
+            # 清理检查点（只保留最佳模型）
+            find "{{inputs.parameters.container_model_path}}" -name "checkpoint-*" -type d | \
+              grep -v "{{inputs.parameters.container_model_path}}/saved_model" | \
+              xargs rm -rf 2>/dev/null || true
+
+            echo "清理完成！"
+        volumeMounts:
+          - name: host-models
+            mountPath: "{{inputs.parameters.container_model_path}}"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+
+    # ==================== 主Pipeline ====================
+    - name: bert-finetune-pipeline
+      inputs:
+        parameters:
+          - name: train_data_path
+          - name: val_data_path
+          - name: model_name
+          - name: batch_size
+          - name: num_epochs
+          - name: learning_rate
+          - name: max_length
+          - name: warmup_steps
+          - name: weight_decay
+          - name: host_model_path
+          - name: container_model_path
+      steps:
+        # 步骤1: 数据准备
+        - - name: prepare-training-data
+            template: prepare-data
+
+        # 步骤2: 构建训练镜像（可选，如果镜像已存在可跳过）
+        - - name: build-docker-image
+            template: build-training-image
+
+        # 步骤3: 训练BERT模型（依赖前两步）
+        - - name: train-model
+            template: train-bert-model
+            arguments:
+              parameters:
+                - name: train_data_path
+                  value: "{{inputs.parameters.train_data_path}}"
+                - name: val_data_path
+                  value: "{{inputs.parameters.val_data_path}}"
+                - name: model_name
+                  value: "{{inputs.parameters.model_name}}"
+                - name: batch_size
+                  value: "{{inputs.parameters.batch_size}}"
+                - name: num_epochs
+                  value: "{{inputs.parameters.num_epochs}}"
+                - name: learning_rate
+                  value: "{{inputs.parameters.learning_rate}}"
+                - name: max_length
+                  value: "{{inputs.parameters.max_length}}"
+                - name: warmup_steps
+                  value: "{{inputs.parameters.warmup_steps}}"
+                - name: weight_decay
+                  value: "{{inputs.parameters.weight_decay}}"
+                - name: container_model_path
+                  value: "{{inputs.parameters.container_model_path}}"
+              artifacts:
+                - name: workspace
+                  from: "{{steps.prepare-training-data.outputs.artifacts.prepared-data}}"
+
+        # 步骤4: 验证模型
+        - - name: validate-trained-model
+            template: validate-model
+            arguments:
+              parameters:
+                - name: container_model_path
+                  value: "{{inputs.parameters.container_model_path}}"
+
+        # 步骤5: 导出模型到S3（可选）
+        - - name: export-trained-model
+            template: export-model
+            arguments:
+              parameters:
+                - name: container_model_path
+                  value: "{{inputs.parameters.container_model_path}}"
+                - name: host_model_path
+                  value: "{{inputs.parameters.host_model_path}}"
+
+        # 步骤6: 清理临时文件
+        - - name: cleanup-resources
+            template: cleanup
+            arguments:
+              parameters:
+                - name: container_model_path
+                  value: "{{inputs.parameters.container_model_path}}"

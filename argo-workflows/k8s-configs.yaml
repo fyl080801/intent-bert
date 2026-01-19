@@ -1,0 +1,369 @@
+# Kubernetes 配置文件集合
+# 包含 RBAC、ConfigMap、Secret 等资源配置
+
+# ============================================
+# Namespace
+# ============================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bert-finetune
+  labels:
+    app: bert-finetune
+    project: financial-intent-classification
+
+---
+# ============================================
+# ServiceAccount - 工作流使用的服务账户
+# ============================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bert-workflow-sa
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+
+---
+# ============================================
+# Role - 访问资源的权限
+# ============================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bert-workflow-role
+  namespace: bert-finetune
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/exec", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+---
+# ============================================
+# RoleBinding - 绑定角色到服务账户
+# ============================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bert-workflow-rolebinding
+  namespace: bert-finetune
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bert-workflow-role
+subjects:
+  - kind: ServiceAccount
+    name: bert-workflow-sa
+    namespace: bert-finetune
+
+---
+# ============================================
+# ConfigMap - 训练配置
+# ============================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bert-training-config
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+data:
+  # 训练参数配置
+  training_params.json: |
+    {
+      "model_name": "bert-base-chinese",
+      "max_length": 128,
+      "batch_size": 16,
+      "num_epochs": 5,
+      "learning_rate": 2e-5,
+      "warmup_steps": 500,
+      "weight_decay": 0.01,
+      "logging_steps": 100,
+      "eval_steps": 500,
+      "save_steps": 500
+    }
+
+  # 数据集配置
+  dataset_config.json: |
+    {
+      "train_file": "datasets/financial_intent_dataset.csv",
+      "val_file": "datasets/financial_intent_validation.csv",
+      "text_column": "text",
+      "label_columns": ["label_level1", "label_level2", "label_level3"]
+    }
+
+  # 模型输出配置
+  output_config.json: |
+    {
+      "model_dir": "/app/models",
+      "log_dir": "/app/models/logs",
+      "checkpoint_dir": "/app/models/checkpoints"
+    }
+
+---
+# ============================================
+# Secret - 敏感信息（镜像仓库凭证、S3凭证等）
+# ============================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bert-workflow-secrets
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+type: Opaque
+stringData:
+  # Docker 镜像仓库凭证
+  docker-registry: |
+    {
+      "auths": {
+        "registry.example.com": {
+          "username": "your-username",
+          "password": "your-password",
+          "email": "your-email@example.com"
+        }
+      }
+    }
+
+  # S3 存储凭证（用于导出模型）
+  s3-credentials: |
+    {
+      "accessKey": "your-s3-access-key",
+      "secretKey": "your-s3-secret-key",
+      "endpoint": "s3.amazonaws.com",
+      "bucket": "your-model-bucket"
+    }
+
+  # Aliyun OSS 凭证（如果使用阿里云）
+  oss-credentials: |
+    {
+      "accessKeyId": "your-access-key-id",
+      "accessKeySecret": "your-access-key-secret",
+      "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+      "bucket": "your-model-bucket"
+    }
+
+---
+# ============================================
+# PersistentVolumeClaim - 持久化存储（可选）
+# ============================================
+# 如果不想使用 hostPath，可以使用 PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bert-models-pvc
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName 可以根据集群配置调整
+  # storageClassName: standard
+  # 如果使用 Local PV
+  # storageClassName: local-storage
+
+---
+# ============================================
+# PodDisruptionBudget - 保证训练任务的高可用
+# ============================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: bert-training-pdb
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+spec:
+  minAvailable: 0  # 允许所有 Pod 被中断（训练任务通常不设置高可用）
+  # maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: bert-finetune
+
+---
+# ============================================
+# ResourceQuota - 资源配额限制
+# ============================================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: bert-resource-quota
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: "40Gi"
+    limits.cpu: "40"
+    limits.memory: "80Gi"
+    persistentvolumeclaims: "10"
+    requests.storage: "100Gi"
+
+---
+# ============================================
+# LimitRange - 默认资源限制
+# ============================================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: bert-limit-range
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+spec:
+  limits:
+    - default:
+        cpu: "4000m"
+        memory: "8Gi"
+      defaultRequest:
+        cpu: "2000m"
+        memory: "4Gi"
+      type: Container
+
+---
+# ============================================
+# NetworkPolicy - 网络策略（可选）
+# ============================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bert-network-policy
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+spec:
+  podSelector:
+    matchLabels:
+      app: bert-finetune
+  policyTypes:
+    - Egress
+  egress:
+    # 允许 DNS 查询
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+
+    # 允许访问外部网络（下载模型、数据等）
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS
+        - protocol: TCP
+          port: 80   # HTTP
+
+---
+# ============================================
+# ConfigMap - 初始化脚本
+# ============================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-scripts
+  namespace: bert-finetune
+  labels:
+    app: bert-finetune
+data:
+  # 数据准备脚本
+  prepare-data.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "开始准备训练数据..."
+
+    # 创建必要的目录
+    mkdir -p /app/datasets
+    mkdir -p /app/models
+    mkdir -p /app/models/logs
+
+    # 下载训练数据（示例）
+    # 实际使用时替换为你的数据源
+    # wget -O /app/datasets/train.csv https://your-data-source.com/train.csv
+    # wget -O /app/datasets/val.csv https://your-data-source.com/val.csv
+
+    # 或者从其他卷复制
+    # cp /data/source/*.csv /app/datasets/
+
+    # 验证数据文件
+    if [ ! -f "/app/datasets/financial_intent_dataset.csv" ]; then
+      echo "警告: 训练数据文件不存在"
+    fi
+
+    if [ ! -f "/app/datasets/financial_intent_validation.csv" ]; then
+      echo "警告: 验证数据文件不存在"
+    fi
+
+    echo "数据准备完成"
+
+  # 健康检查脚本
+  health-check.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "执行健康检查..."
+
+    # 检查 Python 环境
+    python3 --version
+
+    # 检查必需的包
+    python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+    python3 -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
+
+    # 检查 GPU（如果有）
+    if command -v nvidia-smi &> /dev/null; then
+      nvidia-smi
+    else
+      echo "未检测到 GPU 或 nvidia-smi 不可用"
+    fi
+
+    # 检查数据文件
+    if [ -f "/app/datasets/financial_intent_dataset.csv" ]; then
+      echo "训练数据文件存在"
+      line_count=$(wc -l < /app/datasets/financial_intent_dataset.csv)
+      echo "训练数据行数: $line_count"
+    else
+      echo "警告: 训练数据文件不存在"
+    fi
+
+    echo "健康检查完成"
+
+  # 环境验证脚本
+  verify-env.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "验证训练环境..."
+
+    # 检查环境变量
+    echo "PYTHONPATH: $PYTHONPATH"
+    echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
+    echo "MODEL_PATH: $MODEL_PATH"
+
+    # 检查磁盘空间
+    echo "可用磁盘空间:"
+    df -h /app
+
+    # 检查内存
+    echo "可用内存:"
+    free -h || echo "free 命令不可用"
+
+    # 检查 CPU
+    echo "CPU 信息:"
+    nproc || echo "nproc 命令不可用"
+
+    echo "环境验证完成"

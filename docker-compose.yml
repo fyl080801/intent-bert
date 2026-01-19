@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # 金融意图BERT分类服务
+  financial-intent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: financial-intent-bert
+    ports:
+      - "3000:3000"  # Node.js API端口
+      - "5000:5000"  # Python模型服务端口（可选，用于调试）
+    environment:
+      - NODE_ENV=production
+      - MODEL_PATH=/app/models
+      - MODEL_SERVICE_URL=http://localhost:5000
+    volumes:
+      # 挂载模型目录（可选，用于模型更新）
+      - ./models:/app/models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

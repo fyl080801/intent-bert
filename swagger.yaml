@@ -1,0 +1,521 @@
+openapi: 3.0.3
+info:
+  title: 金融意图BERT分类API
+  description: |
+    基于BERT的多层级金融意图分类服务，支持对用户输入进行三级标签分类。
+
+    ## 标签层级结构
+    - **一级标签 (6类)**: 投资理财、信贷服务、账户服务、交易服务、产品咨询、风险合规
+    - **二级标签 (24类)**: 如基金投资、个人贷款、开户注销等
+    - **三级标签 (108类)**: 如开放式基金、房贷、个人开户等
+
+    ## 使用说明
+    1. 使用 `/api/predict` 进行单条文本预测
+    2. 使用 `/api/predict-batch` 进行批量文本预测
+    3. 使用 `/api/model-info` 查看模型标签信息
+    4. 使用 `/api/example` 查看预测示例
+
+  version: 1.0.0
+  contact:
+    name: Financial Intent BERT API
+    email: support@example.com
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: 本地开发服务器
+  - url: http://localhost:5001
+    description: Python模型服务（直接访问）
+
+tags:
+  - name: Health
+    description: 健康检查和服务状态
+  - name: Prediction
+    description: 预测接口
+  - name: Model
+    description: 模型信息
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: 健康检查
+      description: 检查API服务是否正常运行
+      operationId: healthCheck
+      responses:
+        '200':
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: nodejs-api
+
+  /api/predict:
+    post:
+      tags:
+        - Prediction
+      summary: 单条文本预测
+      description: |
+        对单个文本进行金融意图分类预测，返回三级标签及置信度。
+
+        **请求示例**:
+        ```json
+        {
+          "text": "我想买一些基金，有什么推荐的吗？"
+        }
+        ```
+
+        **响应示例**:
+        ```json
+        {
+          "success": true,
+          "data": {
+            "label_level1": "投资理财",
+            "label_level2": "基金投资",
+            "label_level3": "开放式基金",
+            "confidence_level1": 0.9479,
+            "confidence_level2": 0.8270,
+            "confidence_level3": 0.0860,
+            "overall_confidence": 0.6203
+          }
+        }
+        ```
+      operationId: predict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - text
+              properties:
+                text:
+                  type: string
+                  description: 待预测的文本内容
+                  maxLength: 512
+                  example: "我想买一些基金，有什么推荐的吗？"
+      responses:
+        '200':
+          description: 预测成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "缺少text参数"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "预测失败"
+
+  /api/predict-batch:
+    post:
+      tags:
+        - Prediction
+      summary: 批量文本预测
+      description: |
+        对多个文本进行批量金融意图分类预测。
+
+        **请求示例**:
+        ```json
+        {
+          "texts": [
+            "基金怎么买",
+            "我想申请贷款",
+            "怎么转账"
+          ]
+        }
+        ```
+
+        **响应示例**:
+        ```json
+        {
+          "success": true,
+          "data": [
+            {
+              "label_level1": "投资理财",
+              "label_level2": "基金投资",
+              "label_level3": "开放式基金",
+              "confidence_level1": 0.9234,
+              "confidence_level2": 0.8123,
+              "confidence_level3": 0.7234,
+              "overall_confidence": 0.8197
+            },
+            {
+              "label_level1": "信贷服务",
+              "label_level2": "个人贷款",
+              "label_level3": "消费贷",
+              "confidence_level1": 0.9123,
+              "confidence_level2": 0.8456,
+              "confidence_level3": 0.7234,
+              "overall_confidence": 0.8271
+            },
+            {
+              "label_level1": "交易服务",
+              "label_level2": "转账汇款",
+              "label_level3": "跨行转账",
+              "confidence_level1": 0.9456,
+              "confidence_level2": 0.8789,
+              "confidence_level3": 0.6789,
+              "overall_confidence": 0.8345
+            }
+          ]
+        }
+        ```
+      operationId: predictBatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - texts
+              properties:
+                texts:
+                  type: array
+                  description: 待预测的文本数组
+                  maxItems: 100
+                  items:
+                    type: string
+                    maxLength: 512
+                  example:
+                    - "基金怎么买"
+                    - "我想申请贷款"
+                    - "怎么转账"
+      responses:
+        '200':
+          description: 批量预测成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PredictionResult'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "texts参数必须是数组"
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/model-info:
+    get:
+      tags:
+        - Model
+      summary: 获取模型信息
+      description: |
+        获取模型的详细信息，包括支持的标签列表、模型配置等。
+
+        **响应示例**:
+        ```json
+        {
+          "success": true,
+          "data": {
+            "device": "cpu",
+            "max_length": 128,
+            "model_path": "models",
+            "num_labels": {
+              "level1": 6,
+              "level2": 24,
+              "level3": 108
+            },
+            "labels": {
+              "level1": ["交易服务", "产品咨询", "信贷服务", "投资理财", "账户服务", "风险合规"],
+              "level2": ["个人贷款", "交易查询", "产品对比", ...],
+              "level3": ["A股交易", "个人开户", ...]
+            }
+          }
+        }
+        ```
+      operationId: getModelInfo
+      responses:
+        '200':
+          description: 获取模型信息成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/ModelInfo'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/example:
+    get:
+      tags:
+        - Prediction
+      summary: 获取预测示例
+      description: |
+        返回预设示例文本的预测结果，用于快速测试和演示。
+
+        **响应示例**:
+        ```json
+        {
+          "success": true,
+          "data": [
+            {
+              "text": "基金怎么买",
+              "label_level1": "投资理财",
+              "label_level2": "基金投资",
+              "label_level3": "开放式基金",
+              "confidence_level1": 0.9234,
+              "confidence_level2": 0.8123,
+              "confidence_level3": 0.7234,
+              "overall_confidence": 0.8197
+            }
+          ]
+        }
+        ```
+      operationId: getExamples
+      responses:
+        '200':
+          description: 获取示例成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        text:
+                          type: string
+                          example: "基金怎么买"
+                        label_level1:
+                          type: string
+                          example: "投资理财"
+                        label_level2:
+                          type: string
+                          example: "基金投资"
+                        label_level3:
+                          type: string
+                          example: "开放式基金"
+                        confidence_level1:
+                          type: number
+                          format: float
+                          example: 0.9234
+                        confidence_level2:
+                          type: number
+                          format: float
+                          example: 0.8123
+                        confidence_level3:
+                          type: number
+                          format: float
+                          example: 0.7234
+                        overall_confidence:
+                          type: number
+                          format: float
+                          example: 0.8197
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    PredictResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/PredictionResult'
+
+    PredictionResult:
+      type: object
+      description: 单个预测结果
+      required:
+        - label_level1
+        - label_level2
+        - label_level3
+        - confidence_level1
+        - confidence_level2
+        - confidence_level3
+        - overall_confidence
+      properties:
+        label_level1:
+          type: string
+          description: 一级分类标签
+          enum:
+            - 投资理财
+            - 信贷服务
+            - 账户服务
+            - 交易服务
+            - 产品咨询
+            - 风险合规
+          example: "投资理财"
+        label_level2:
+          type: string
+          description: 二级分类标签
+          example: "基金投资"
+        label_level3:
+          type: string
+          description: 三级分类标签
+          example: "开放式基金"
+        confidence_level1:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 一级标签预测置信度
+          example: 0.9479
+        confidence_level2:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 二级标签预测置信度
+          example: 0.827
+        confidence_level3:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 三级标签预测置信度
+          example: 0.086
+        overall_confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: 综合置信度（三个层级置信度的平均值）
+          example: 0.6203
+
+    ModelInfo:
+      type: object
+      properties:
+        device:
+          type: string
+          description: 运行设备
+          example: "cpu"
+        max_length:
+          type: integer
+          description: 模型最大输入长度
+          example: 128
+        model_path:
+          type: string
+          description: 模型路径
+          example: "models"
+        num_labels:
+          type: object
+          description: 各层级标签数量
+          properties:
+            level1:
+              type: integer
+              example: 6
+            level2:
+              type: integer
+              example: 24
+            level3:
+              type: integer
+              example: 108
+        labels:
+          type: object
+          description: 各层级标签列表
+          properties:
+            level1:
+              type: array
+              items:
+                type: string
+              example: ["交易服务", "产品咨询", "信贷服务", "投资理财", "账户服务", "风险合规"]
+            level2:
+              type: array
+              items:
+                type: string
+              example: ["个人贷款", "交易查询", "产品对比", "产品推荐"]
+            level3:
+              type: array
+              items:
+                type: string
+              example: ["A股交易", "个人开户", "临时额度"]
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: 错误信息
+          example: "缺少text参数"
+
+  examples:
+    PredictRequest:
+      value:
+        text: "我想买一些基金，有什么推荐的吗？"
+    PredictBatchRequest:
+      value:
+        texts:
+          - "基金怎么买"
+          - "我想申请贷款"
+          - "怎么转账"
+    PredictSuccessResponse:
+      value:
+        success: true
+        data:
+          label_level1: "投资理财"
+          label_level2: "基金投资"
+          label_level3: "开放式基金"
+          confidence_level1: 0.9479
+          confidence_level2: 0.827
+          confidence_level3: 0.086
+          overall_confidence: 0.6203
+    ErrorResponseExample:
+      value:
+        success: false
+        error: "缺少text参数"

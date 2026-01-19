@@ -53,14 +53,33 @@ npm run train:model
 
 ### 3. 启动服务
 
-**本地开发：**
+**本地开发（推荐）：**
+
+服务分为两个部分：
+- **Python模型服务** (端口5001) - 加载BERT模型并进行推理
+- **Node.js API服务** (端口3000) - 提供REST API和Swagger文档
+
+**⚠️ macOS用户注意**：端口5000被macOS的AirPlay Receiver占用，Python服务已配置为使用5001端口。
 
 ```bash
-# 终端1: Python模型服务
+# 终端1: 启动Python模型服务
 npm run serve:model
+# 服务运行在 http://localhost:5001
 
-# 终端2: Node.js API
+# 终端2: 启动Node.js API服务
 npm run dev
+# 服务运行在 http://localhost:3000
+# API文档: http://localhost:3000/api-docs
+```
+
+**手动启动（如需自定义）：**
+
+```bash
+# Python模型服务（手动设置环境变量）
+MODEL_PATH=models PORT=5001 ./venv/bin/python lib/python/model_server.py
+
+# Node.js API服务（手动设置环境变量）
+MODEL_SERVICE_URL=http://localhost:5001 npm run dev
 ```
 
 **Docker部署：**
@@ -80,6 +99,9 @@ curl -X POST http://localhost:3000/api/predict \
 ## 文档
 
 - [快速开始](docs/QUICKSTART.md) - 5分钟快速部署
+- **[服务部署指南](docs/DEPLOYMENT.md)** - 详细的服务启动和配置说明 ⭐
+- [API文档 (Swagger)](http://localhost:3000/api-docs) - 交互式API文档（需先启动服务）
+- [Swagger使用指南](SWAGGER_README.md) - API接口详细说明和示例
 - [完整文档](docs/README_BERT.md) - 系统架构和API详解
 - [数据集说明](docs/DATASET_README.md) - 数据集详细信息
 

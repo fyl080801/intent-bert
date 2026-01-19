@@ -6,6 +6,10 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { modelClient, PredictionResult } from './modelClient';
+import swaggerUi from 'swagger-ui-express';
+import * as yaml from 'js-yaml';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,6 +17,18 @@ const PORT = process.env.PORT || 3000;
 // 中间件
 app.use(cors());
 app.use(express.json());
+
+// 加载Swagger文档
+const swaggerDocument = yaml.load(
+  fs.readFileSync(path.join(__dirname, '../swagger.yaml'), 'utf8')
+);
+
+// Swagger UI API文档
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: "金融意图BERT分类API文档"
+}));
 
 // 健康检查
 app.get('/health', (req: Request, res: Response) => {
@@ -119,6 +135,7 @@ app.get('/api/example', async (req: Request, res: Response) => {
 app.listen(PORT, async () => {
   console.log(`Node.js API服务已启动: http://localhost:${PORT}`);
   console.log(`健康检查: http://localhost:${PORT}/health`);
+  console.log(`API文档: http://localhost:${PORT}/api-docs`);
   console.log(`预测接口: http://localhost:${PORT}/api/predict`);
   console.log(`模型信息: http://localhost:${PORT}/api/model-info`);
   console.log(`示例接口: http://localhost:${PORT}/api/example`);

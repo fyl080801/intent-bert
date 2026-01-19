@@ -51,9 +51,19 @@ class ModelPredictor:
         self.level2_id_to_label = {v: k for k, v in self.encoders['level2']['mapping'].items()}
         self.level3_id_to_label = {v: k for k, v in self.encoders['level3']['mapping'].items()}
 
+        # 获取标签数量
+        num_level1_labels = len(self.encoders['level1']['classes'])
+        num_level2_labels = len(self.encoders['level2']['classes'])
+        num_level3_labels = len(self.encoders['level3']['classes'])
+
         # 加载tokenizer和模型
         self.tokenizer = BertTokenizer.from_pretrained(model_path)
-        self.model = BertForMultiLabelClassification.from_pretrained(model_path)
+        self.model = BertForMultiLabelClassification.from_pretrained(
+            model_path,
+            num_level1_labels=num_level1_labels,
+            num_level2_labels=num_level2_labels,
+            num_level3_labels=num_level3_labels
+        )
         self.model.to(self.device)
         self.model.eval()
 

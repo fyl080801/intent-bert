@@ -1,0 +1,264 @@
+{
+  "version": "1.0",
+  "description": "金融意图分类层级配置 - 支持灵活多级结构",
+  "labels": [
+    {
+      "name": "投资理财",
+      "children": [
+        {
+          "name": "基金投资",
+          "children": [
+            { "name": "开放式基金", "children": [] },
+            { "name": "指数基金", "children": [] },
+            { "name": "债券基金", "children": [] },
+            { "name": "货币基金", "children": [] },
+            { "name": "基金定投", "children": [] },
+            { "name": "基金转换", "children": [] },
+            { "name": "基金赎回", "children": [] }
+          ]
+        },
+        {
+          "name": "股票投资",
+          "children": [
+            { "name": "A股交易", "children": [] },
+            { "name": "港股通", "children": [] },
+            { "name": "美股交易", "children": [] },
+            { "name": "新股申购", "children": [] },
+            { "name": "股票查询", "children": [] },
+            { "name": "持仓分析", "children": [] }
+          ]
+        },
+        {
+          "name": "理财产品",
+          "children": [
+            { "name": "银行理财", "children": [] },
+            { "name": "净值型理财", "children": [] },
+            { "name": "预期收益型", "children": [] },
+            { "name": "结构性存款", "children": [] },
+            { "name": "大额存单", "children": [] }
+          ]
+        },
+        {
+          "name": "保险规划",
+          "children": [
+            { "name": "人寿保险", "children": [] },
+            { "name": "健康保险", "children": [] },
+            { "name": "财产保险", "children": [] },
+            { "name": "意外险", "children": [] },
+            { "name": "车险", "children": [] },
+            { "name": "保险理赔", "children": [] }
+          ]
+        },
+        {
+          "name": "资产配置",
+          "children": [
+            { "name": "资产配置建议", "children": [] },
+            { "name": "风险评估", "children": [] },
+            { "name": "投资组合", "children": [] },
+            { "name": "定期调整", "children": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "信贷服务",
+      "children": [
+        {
+          "name": "个人贷款",
+          "children": [
+            { "name": "房贷", "children": [] },
+            { "name": "消费贷", "children": [] },
+            { "name": "经营贷", "children": [] },
+            { "name": "信用贷", "children": [] },
+            { "name": "抵押贷", "children": [] },
+            { "name": "贷款计算", "children": [] }
+          ]
+        },
+        {
+          "name": "企业贷款",
+          "children": [
+            { "name": "流动资金贷款", "children": [] },
+            { "name": "固定资产贷款", "children": [] },
+            { "name": "贸易融资", "children": [] },
+            { "name": "贷款审批", "children": [] }
+          ]
+        },
+        {
+          "name": "信用卡服务",
+          "children": [
+            { "name": "办卡申请", "children": [] },
+            { "name": "信用卡激活", "children": [] },
+            { "name": "额度提升", "children": [] },
+            { "name": "临时额度", "children": [] },
+            { "name": "账单分期", "children": [] }
+          ]
+        },
+        {
+          "name": "额度管理",
+          "children": [
+            { "name": "额度查询", "children": [] },
+            { "name": "额度调整", "children": [] },
+            { "name": "授信管理", "children": [] },
+            { "name": "担保方式", "children": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "账户服务",
+      "children": [
+        {
+          "name": "开户注销",
+          "children": [
+            { "name": "个人开户", "children": [] },
+            { "name": "企业开户", "children": [] },
+            { "name": "账户注销", "children": [] },
+            { "name": "休眠账户激活", "children": [] }
+          ]
+        },
+        {
+          "name": "密码管理",
+          "children": [
+            { "name": "登录密码", "children": [] },
+            { "name": "支付密码", "children": [] },
+            { "name": "密码重置", "children": [] },
+            { "name": "密码找回", "children": [] }
+          ]
+        },
+        {
+          "name": "权限设置",
+          "children": [
+            { "name": "交易权限", "children": [] },
+            { "name": "转账限额", "children": [] },
+            { "name": "委托授权", "children": [] },
+            { "name": "权限冻结", "children": [] }
+          ]
+        },
+        {
+          "name": "安全验证",
+          "children": [
+            { "name": "实名认证", "children": [] },
+            { "name": "人脸识别", "children": [] },
+            { "name": "短信验证", "children": [] },
+            { "name": "盾卡管理", "children": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "交易服务",
+      "children": [
+        {
+          "name": "转账汇款",
+          "children": [
+            { "name": "行内转账", "children": [] },
+            { "name": "跨行转账", "children": [] },
+            { "name": "实时转账", "children": [] },
+            { "name": "预约转账", "children": [] },
+            { "name": "跨境汇款", "children": [] }
+          ]
+        },
+        {
+          "name": "支付缴费",
+          "children": [
+            { "name": "水电煤缴费", "children": [] },
+            { "name": "手机充值", "children": [] },
+            { "name": "交通罚款", "children": [] },
+            { "name": "税费缴纳", "children": [] }
+          ]
+        },
+        {
+          "name": "代扣代缴",
+          "children": [
+            { "name": "代扣设置", "children": [] },
+            { "name": "代扣取消", "children": [] },
+            { "name": "自动缴费", "children": [] },
+            { "name": "代扣查询", "children": [] }
+          ]
+        },
+        {
+          "name": "交易查询",
+          "children": [
+            { "name": "交易明细", "children": [] },
+            { "name": "交易记录", "children": [] },
+            { "name": "电子回单", "children": [] },
+            { "name": "对账单", "children": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "产品咨询",
+      "children": [
+        {
+          "name": "产品对比",
+          "children": [
+            { "name": "收益率对比", "children": [] },
+            { "name": "风险等级对比", "children": [] },
+            { "name": "费用对比", "children": [] },
+            { "name": "产品优缺点", "children": [] }
+          ]
+        },
+        {
+          "name": "收益计算",
+          "children": [
+            { "name": "预期收益", "children": [] },
+            { "name": "实际收益", "children": [] },
+            { "name": "复利计算", "children": [] },
+            { "name": "历史收益查询", "children": [] }
+          ]
+        },
+        {
+          "name": "费用说明",
+          "children": [
+            { "name": "手续费", "children": [] },
+            { "name": "管理费", "children": [] },
+            { "name": "赎回费", "children": [] },
+            { "name": "服务费", "children": [] }
+          ]
+        },
+        {
+          "name": "产品推荐",
+          "children": [
+            { "name": "稳健型产品", "children": [] },
+            { "name": "进取型产品", "children": [] },
+            { "name": "低风险产品", "children": [] },
+            { "name": "热门产品", "children": [] }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "风险合规",
+      "children": [
+        {
+          "name": "风险评估",
+          "children": [
+            { "name": "风险测评", "children": [] },
+            { "name": "风险等级", "children": [] },
+            { "name": "承受能力", "children": [] },
+            { "name": "风险提示", "children": [] }
+          ]
+        },
+        {
+          "name": "合规咨询",
+          "children": [
+            { "name": "反洗钱", "children": [] },
+            { "name": "身份识别", "children": [] },
+            { "name": "合规要求", "children": [] },
+            { "name": "监管政策", "children": [] }
+          ]
+        },
+        {
+          "name": "信息披露",
+          "children": [
+            { "name": "产品公告", "children": [] },
+            { "name": "风险提示书", "children": [] },
+            { "name": "产品说明书", "children": [] },
+            { "name": "信息披露查询", "children": [] }
+          ]
+        }
+      ]
+    }
+  ]
+}

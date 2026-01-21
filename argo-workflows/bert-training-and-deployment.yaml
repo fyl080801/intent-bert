@@ -737,7 +737,8 @@ spec:
           - name: warmup_steps
           - name: weight_decay
           - name: host_model_download_path
-          - name: host_model_output_path
+          - name: host_model_output_base_path
+          - name: training_timestamp
           - name: container_model_cache_path
           - name: container_model_output_path
           - name: container_data_path

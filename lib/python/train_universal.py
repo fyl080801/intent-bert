@@ -380,7 +380,7 @@ def main():
     train_kwargs['dataset_name'] = args.dataset
 
     # 执行训练
-    success = trainer.train(args.dataset, **train_kwargs)
+    success = trainer.train(**train_kwargs)
     sys.exit(0 if success else 1)
 
 

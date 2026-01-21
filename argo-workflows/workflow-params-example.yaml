@@ -1,0 +1,43 @@
+# BERT训练工作流 - 参数配置文件示例
+# 使用方法: argo submit bert-training-and-deployment.yaml --parameter-file workflow-params-example.yaml
+
+# Git仓库配置
+repo_url: "https://github.com/fyl080801/intent-bert.git"
+branch: "main"
+git_revision: ""
+
+# 训练数据配置（PVC挂载）
+pvc_name: "bert-training-data-pvc"
+pvc_train_data_path: "datasets/financial_intent_dataset.csv"
+pvc_val_data_path: "datasets/financial_intent_validation.csv"
+pvc_config_path: "datasets/dataset_labels_info.json"
+
+# 训练超参数
+model_name: "bert-base-chinese"
+batch_size: "16"
+num_epochs: "5"
+learning_rate: "2e-5"
+max_length: "128"
+warmup_steps: "500"
+weight_decay: "0.01"
+
+# 节点本地路径配置（模型下载和结果存储）
+host_model_download_path: "/mnt/models/cache"
+host_model_output_path: "/mnt/models/bert-output"
+
+# 容器内路径
+container_model_cache_path: "/app/.cache/models"
+container_model_output_path: "/app/models"
+container_data_path: "/data"
+
+# Docker镜像仓库配置
+image_registry: "192.168.68.95:31443"
+image_repository: "ai-apps/intent-bert"
+image_tag: "latest"
+
+# 训练镜像配置
+training_image: "python:3.10-slim"
+
+# 代理配置（用于下载模型）
+https_proxy: "http://192.168.68.95:25041"
+http_proxy: "http://192.168.68.95:25041"

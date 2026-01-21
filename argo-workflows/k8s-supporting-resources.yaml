@@ -1,0 +1,404 @@
+# ============================================
+# 支持性Kubernetes资源
+# 用于BERT训练和部署工作流
+# ============================================
+
+---
+# 1. PersistentVolumeClaim - 训练数据存储
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bert-training-data-pvc
+  namespace: dev
+  labels:
+    app: bert-finetune
+    type: training-data
+spec:
+  accessModes:
+    - ReadOnlyMany  # 多个Pod只读挂载
+  resources:
+    requests:
+      storage: 10Gi
+  # 可选：指定StorageClass
+  # storageClassName: nfs-storage
+  # 可选：使用现有PV
+  # volumeName: bert-training-data-pv
+
+---
+# 2. Secret - Docker镜像仓库认证
+apiVersion: v1
+kind: Secret
+metadata:
+  name: docker-registry-secret
+  namespace: dev
+  labels:
+    app: bert-finetune
+type: kubernetes.io/dockerconfigjson
+data:
+  # .dockerconfigjson: base64编码的Docker配置
+  # 生成命令: kubectl create secret docker-registry docker-registry-secret \
+  #   --docker-server=192.168.68.95:31443 \
+  #   --docker-username=<username> \
+  #   --docker-password=<password> \
+  #   --dry-run=client -o yaml
+  .dockerconfigjson: <base64-encoded-docker-config>
+
+---
+# 3. Secret - Git仓库SSH密钥（如果使用SSH）
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-ssh-key
+  namespace: dev
+  labels:
+    app: bert-finetune
+type: kubernetes.io/ssh-auth
+data:
+  # ssh-privatekey: base64编码的SSH私钥
+  ssh-privatekey: <base64-encoded-ssh-private-key>
+
+---
+# 4. ConfigMap - 工作流默认配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bert-workflow-config
+  namespace: dev
+  labels:
+    app: bert-finetune
+data:
+  # 默认工作流参数
+  workflow-defaults.yaml: |
+    repo_url: "https://github.com/fyl080801/intent-bert.git"
+    branch: "main"
+    model_name: "bert-base-chinese"
+    batch_size: "16"
+    num_epochs: "5"
+    learning_rate: "2e-5"
+    max_length: "128"
+    warmup_steps: "500"
+    weight_decay: "0.01"
+    pvc_name: "bert-training-data-pvc"
+    pvc_train_data_path: "datasets/financial_intent_dataset.csv"
+    pvc_val_data_path: "datasets/financial_intent_validation.csv"
+    pvc_config_path: "datasets/dataset_labels_info.json"
+    host_model_download_path: "/mnt/models/cache"
+    host_model_output_path: "/mnt/models/bert-output"
+    container_model_cache_path: "/app/.cache/models"
+    container_model_output_path: "/app/models"
+    container_data_path: "/data"
+    image_registry: "192.168.68.95:31443"
+    image_repository: "ai-apps/intent-bert"
+    image_tag: "latest"
+    # 代理配置（用于下载模型）
+    https_proxy: "http://192.168.68.95:25041"
+    http_proxy: "http://192.168.68.95:25041"
+
+---
+# 5. PersistentVolume - 模型存储（使用hostPath示例）
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bert-model-cache-pv
+  namespace: dev
+  labels:
+    app: bert-finetune
+    type: model-cache
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  local:
+    path: /mnt/models/cache
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                # 指定具有大容量存储的节点
+                - node1.example.com
+                - node2.example.com
+
+---
+# 6. PersistentVolume - 模型输出
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bert-model-output-pv
+  namespace: dev
+  labels:
+    app: bert-finetune
+    type: model-output
+spec:
+  capacity:
+    storage: 30Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  local:
+    path: /mnt/models/bert-output
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - node1.example.com
+                - node2.example.com
+
+---
+# 7. StorageClass - 本地存储
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# 8. RuntimeClass - NVIDIA GPU支持
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+  labels:
+    app: bert-finetune
+handler: nvidia
+# 可选：配置容器运行时参数
+# overhead:
+#   podFixed:
+#     memory: "1Gi"
+#     cpu: "500m"
+# scheduling:
+#   nodeSelector:
+#     gpu: "true"
+
+---
+# 9. 示例Deployment - 推理服务部署
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intent-bert-deployment
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: intent-bert
+      component: inference
+  template:
+    metadata:
+      labels:
+        app: intent-bert
+        component: inference
+    spec:
+      containers:
+        - name: intent-bert
+          image: 192.168.68.95:31443/ai-apps/intent-bert:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http-api
+              containerPort: 3000
+              protocol: TCP
+            - name: model-service
+              containerPort: 5000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: MODEL_PATH
+              value: "/app/models"
+            - name: MODEL_SERVICE_URL
+              value: "http://localhost:5000"
+            - name: PYTHONPATH
+              value: "/app/lib/python"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: models
+              mountPath: /app/models
+              readOnly: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: bert-trained-models-pvc
+      imagePullSecrets:
+        - name: docker-registry-secret
+
+---
+# 10. Service - 推理服务
+apiVersion: v1
+kind: Service
+metadata:
+  name: intent-bert-service
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-api
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+    - name: model-service
+      port: 5000
+      targetPort: 5000
+      protocol: TCP
+  selector:
+    app: intent-bert
+    component: inference
+
+---
+# 11. Ingress - 外部访问（可选）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: intent-bert-ingress
+  namespace: dev
+  labels:
+    app: intent-bert
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"  # 如果使用cert-manager
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - intent-bert.example.com
+      secretName: intent-bert-tls
+  rules:
+    - host: intent-bert.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: intent-bert-service
+                port:
+                  number: 80
+
+---
+# 12. ServiceAccount - 工作流执行账号
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bert-workflow-sa
+  namespace: dev
+  labels:
+    app: bert-finetune
+---
+# 13. Role - 工作流角色
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bert-workflow-role
+  namespace: dev
+  labels:
+    app: bert-finetune
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - pods/exec
+      - pods/log
+      - secrets
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - argoproj.io
+    resources:
+      - workflows
+      - workflowtaskresults
+      - workflowtasksets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+
+---
+# 14. RoleBinding - 角色绑定
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bert-workflow-rolebinding
+  namespace: dev
+  labels:
+    app: bert-finetune
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bert-workflow-role
+subjects:
+  - kind: ServiceAccount
+    name: bert-workflow-sa
+    namespace: dev
+
+---
+# 15. PersistentVolumeClaim - 训练完成的模型存储
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bert-trained-models-pvc
+  namespace: dev
+  labels:
+    app: bert-finetune
+    type: trained-models
+spec:
+  accessModes:
+    - ReadOnlyMany  # 推理服务只需要读取
+  resources:
+    requests:
+      storage: 5Gi
+  # storageClassName: nfs-storage

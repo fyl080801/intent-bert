@@ -1,0 +1,887 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: bert-training-and-deployment
+  namespace: dev
+  labels:
+    app: bert-finetune
+    project: financial-intent-classification
+    workflow-type: training-and-deployment
+  annotations:
+    description: "BERT微调与推理服务构建工作流 - 拉取源码、训练模型、构建推理镜像"
+spec:
+  # 工作流执行服务账号
+  serviceAccountName: bert-workflow-sa
+  # 工作流执行超时时间（4小时）
+  activeDeadlineSeconds: 14400
+  # 工作流重试策略
+  retryStrategy:
+    limit: 2
+    retryPolicy: "OnError"
+
+  # 入口参数
+  entrypoint: bert-training-pipeline
+
+  # 全局参数定义
+  arguments:
+    parameters:
+      # Git 仓库配置
+      - name: repo_url
+        value: "https://github.com/fyl080801/intent-bert.git"
+      - name: branch
+        value: "main"
+      - name: git_revision
+        value: ""
+
+      # 训练数据配置（PVC挂载）
+      - name: pvc_name
+        value: "bert-training-data-pvc"
+      - name: pvc_train_data_path
+        value: "datasets/financial_intent_dataset.csv"
+      - name: pvc_val_data_path
+        value: "datasets/financial_intent_validation.csv"
+      - name: pvc_config_path
+        value: "datasets/dataset_labels_info.json"
+
+      # 训练超参数
+      - name: model_name
+        value: "bert-base-chinese"
+      - name: batch_size
+        value: "16"
+      - name: num_epochs
+        value: "5"
+      - name: learning_rate
+        value: "2e-5"
+      - name: max_length
+        value: "128"
+      - name: warmup_steps
+        value: "500"
+      - name: weight_decay
+        value: "0.01"
+
+      # 节点本地路径配置（模型下载和结果存储）
+      - name: host_model_download_path
+        value: "/mnt/models/cache"  # 预训练模型下载缓存路径
+      - name: host_model_output_path
+        value: "/mnt/models/bert-output"  # 训练结果输出路径
+
+      # 容器内路径
+      - name: container_model_cache_path
+        value: "/app/.cache/models"  # 预训练模型缓存容器路径
+      - name: container_model_output_path
+        value: "/app/models"  # 训练输出容器路径
+      - name: container_data_path
+        value: "/data"  # 训练数据容器路径
+
+      # Docker镜像仓库配置
+      - name: image_registry
+        value: "192.168.68.95:31443"
+      - name: image_repository
+        value: "ai-apps/intent-bert"
+      - name: image_tag
+        value: "latest"
+
+      # 训练镜像配置
+      - name: training_image
+        value: "python:3.10-slim"
+
+      # 代理配置（用于下载模型）
+      - name: https_proxy
+        value: "http://192.168.68.95:25041"
+      - name: http_proxy
+        value: "http://192.168.68.95:25041"
+
+  # 卷模板定义
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace-volume
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+
+  # 工作流模板定义
+  templates:
+
+    # ==================== 1. 拉取源码模板 ====================
+    - name: checkout-source
+      inputs:
+        parameters:
+          - name: repo_url
+          - name: branch
+          - name: git_revision
+      outputs:
+        artifacts:
+          - name: source-code
+            path: /src
+      script:
+        image: alpine/git:latest
+        command: [sh, -c]
+        source: |
+          set -e
+
+          echo "=========================================="
+          echo "步骤1: 拉取源码"
+          echo "=========================================="
+
+          REPO_URL="{{inputs.parameters.repo_url}}"
+          BRANCH="{{inputs.parameters.branch}}"
+          REVISION="{{inputs.parameters.git_revision}}"
+
+          # 如果指定了revision，使用它；否则使用branch
+          if [ -n "$REVISION" ]; then
+              echo "使用指定Revision: $REVISION"
+              git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /src
+              cd /src
+              git checkout "$REVISION"
+          else
+              echo "使用分支: $BRANCH"
+              git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /src
+          fi
+
+          echo "源码拉取完成"
+          echo "当前目录内容:"
+          ls -la /src
+
+          # 显示Git信息
+          cd /src
+          echo "=========================================="
+          echo "Git 信息:"
+          echo "=========================================="
+          echo "分支: $(git branch --show-current)"
+          echo "Commit: $(git rev-parse HEAD)"
+          echo "作者: $(git log -1 --pretty=format:'%an')"
+          echo "时间: $(git log -1 --pretty=format:'%ai')"
+          echo "提交信息: $(git log -1 --pretty=format:'%s')"
+        volumeMounts:
+          - name: workspace-volume
+            mountPath: /src
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+
+    # ==================== 2. 数据准备模板（PVC挂载）====================
+    - name: prepare-training-data
+      inputs:
+        parameters:
+          - name: pvc_name
+          - name: pvc_train_data_path
+          - name: pvc_val_data_path
+          - name: pvc_config_path
+          - name: container_data_path
+      volumes:
+        - name: training-data-pvc
+          persistentVolumeClaim:
+            claimName: "{{inputs.parameters.pvc_name}}"
+      script:
+        image: python:3.10-slim
+        command: [python3, -c]
+        source: |
+          import os
+          import sys
+          import json
+          import pandas as pd
+
+          print("=" * 50)
+          print("步骤2: 数据准备与验证")
+          print("=" * 50)
+
+          data_path = "{{inputs.parameters.container_data_path}}"
+          train_path = os.path.join(data_path, "{{inputs.parameters.pvc_train_data_path}}")
+          val_path = os.path.join(data_path, "{{inputs.parameters.pvc_val_data_path}}")
+          config_path = os.path.join(data_path, "{{inputs.parameters.pvc_config_path}}")
+
+          print(f"训练数据路径: {train_path}")
+          print(f"验证数据路径: {val_path}")
+          print(f"配置文件路径: {config_path}")
+
+          # 检查文件是否存在
+          if not os.path.exists(train_path):
+              print(f"❌ 错误: 训练数据文件不存在: {train_path}")
+              sys.exit(1)
+          else:
+              print(f"✓ 找到训练数据")
+
+          if not os.path.exists(val_path):
+              print(f"❌ 错误: 验证数据文件不存在: {val_path}")
+              sys.exit(1)
+          else:
+              print(f"✓ 找到验证数据")
+
+          if not os.path.exists(config_path):
+              print(f"❌ 错误: 配置文件不存在: {config_path}")
+              sys.exit(1)
+          else:
+              print(f"✓ 找到配置文件")
+
+          # 读取并验证数据
+          try:
+              train_df = pd.read_csv(train_path)
+              val_df = pd.read_csv(val_path)
+
+              print(f"\n数据集信息:")
+              print(f"  训练集大小: {len(train_df)} 条")
+              print(f"  验证集大小: {len(val_df)} 条")
+              print(f"  训练集列: {train_df.columns.tolist()}")
+              print(f"  验证集列: {val_df.columns.tolist()}")
+
+              # 检查必需列
+              required_columns = ['text', 'label_level1', 'label_level2', 'label_level3']
+              missing_columns = [col for col in required_columns if col not in train_df.columns]
+
+              if missing_columns:
+                  print(f"\n❌ 错误: 数据集缺少必需列: {missing_columns}")
+                  sys.exit(1)
+              else:
+                  print(f"\n✓ 所有必需列都存在")
+
+              # 显示训练集示例
+              print(f"\n训练集示例（前3行）:")
+              print(train_df.head(3).to_string())
+
+          except Exception as e:
+              print(f"\n❌ 读取数据文件时出错: {str(e)}")
+              sys.exit(1)
+
+          # 读取配置文件
+          try:
+              with open(config_path, 'r', encoding='utf-8') as f:
+                  config = json.load(f)
+              print(f"\n✓ 配置文件读取成功")
+              print(f"配置内容: {json.dumps(config, indent=2, ensure_ascii=False)}")
+          except Exception as e:
+              print(f"\n❌ 读取配置文件时出错: {str(e)}")
+              sys.exit(1)
+
+          print("\n" + "=" * 50)
+          print("数据准备与验证完成 ✓")
+          print("=" * 50)
+        volumeMounts:
+          - name: training-data-pvc
+            mountPath: "{{inputs.parameters.container_data_path}}"
+            readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+    # ==================== 3. 安装依赖模板 ====================
+    - name: install-dependencies
+      inputs:
+        artifacts:
+          - name: source-code
+            path: /app
+      script:
+        image: python:3.10-slim
+        command: [bash, -c]
+        source: |
+          set -e
+
+          echo "=========================================="
+          echo "步骤3: 安装Python依赖"
+          echo "=========================================="
+
+          cd /app
+
+          # 安装Node.js依赖（如果需要构建前端）
+          echo "安装Node.js依赖..."
+          if [ -f "package.json" ]; then
+              npm install --production || echo "警告: npm install 失败，但继续执行"
+          fi
+
+          # 安装Python依赖
+          echo "安装Python依赖..."
+          if [ -f "lib/requirements.txt" ]; then
+              pip install --no-cache-dir -r lib/requirements.txt
+          else
+              echo "警告: lib/requirements.txt 不存在"
+              # 安装基础依赖
+              pip install --no-cache-dir \
+                  torch>=2.0.0 \
+                  transformers>=4.30.0 \
+                  pandas>=2.0.0 \
+                  numpy>=1.24.0 \
+                  scikit-learn>=1.3.0 \
+                  flask>=2.3.0 \
+                  flask-cors>=4.0.0
+          fi
+
+          echo "依赖安装完成"
+          pip list | grep -E "(torch|transformers|pandas)"
+
+          echo "=========================================="
+          echo "Python环境信息:"
+          echo "=========================================="
+          python3 --version
+          pip --version
+        env:
+          - name: HTTPS_PROXY
+            value: "{{workflow.parameters.https_proxy}}"
+          - name: HTTP_PROXY
+            value: "{{workflow.parameters.http_proxy}}"
+          - name: https_proxy
+            value: "{{workflow.parameters.https_proxy}}"
+          - name: http_proxy
+            value: "{{workflow.parameters.http_proxy}}"
+        volumeMounts:
+          - name: workspace-volume
+            mountPath: /app
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+    # ==================== 4. BERT模型训练模板（CUDA支持）====================
+    - name: train-bert-model
+      inputs:
+        parameters:
+          - name: model_name
+          - name: batch_size
+          - name: num_epochs
+          - name: learning_rate
+          - name: max_length
+          - name: warmup_steps
+          - name: weight_decay
+          - name: container_model_cache_path
+          - name: container_model_output_path
+          - name: container_data_path
+          - name: host_model_download_path
+          - name: host_model_output_path
+        artifacts:
+          - name: source-code
+            path: /src
+      volumes:
+        # 节点本地路径 - 用于预训练模型下载缓存
+        - name: host-model-cache
+          hostPath:
+            path: "{{inputs.parameters.host_model_download_path}}"
+            type: DirectoryOrCreate
+        # 节点本地路径 - 用于训练结果输出
+        - name: host-model-output
+          hostPath:
+            path: "{{inputs.parameters.host_model_output_path}}"
+            type: DirectoryOrCreate
+        # PVC - 用于挂载训练数据
+        - name: training-data-pvc
+          persistentVolumeClaim:
+            claimName: "{{workflow.parameters.pvc_name}}"
+      container:
+        image: python:3.10-slim
+        command: [bash, -c]
+        args:
+          - |
+            set -e
+
+            echo "=========================================="
+            echo "步骤4: 开始BERT模型训练"
+            echo "=========================================="
+
+            cd /src
+
+            # 配置环境变量
+            export PYTHONPATH=/src/lib/python:$PYTHONPATH
+            export TRANSFORMERS_CACHE="{{inputs.parameters.container_model_cache_path}}"
+            export HF_HOME="{{inputs.parameters.container_model_cache_path}}"
+
+            # 检测CUDA是否可用
+            echo "检测CUDA环境..."
+            python3 -c "import torch; print(f'CUDA可用: {torch.cuda.is_available()}'); print(f'CUDA版本: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}'); print(f'GPU数量: {torch.cuda.device_count()}')"
+
+            # 创建输出目录
+            mkdir -p "{{inputs.parameters.container_model_output_path}}"
+
+            # 构建训练命令
+            TRAIN_CMD="python3 /src/lib/python/train.py \
+              --train_data {{inputs.parameters.container_data_path}}/{{workflow.parameters.pvc_train_data_path}} \
+              --val_data {{inputs.parameters.container_data_path}}/{{workflow.parameters.pvc_val_data_path}} \
+              --model_name {{inputs.parameters.model_name}} \
+              --output_dir {{inputs.parameters.container_model_output_path}} \
+              --batch_size {{inputs.parameters.batch_size}} \
+              --num_epochs {{inputs.parameters.num_epochs}} \
+              --learning_rate {{inputs.parameters.learning_rate}} \
+              --max_length {{inputs.parameters.max_length}} \
+              --warmup_steps {{inputs.parameters.warmup_steps}} \
+              --weight_decay {{inputs.parameters.weight_decay}}"
+
+            echo "训练命令:"
+            echo "$TRAIN_CMD"
+            echo ""
+
+            # 执行训练
+            echo "开始训练..."
+            $TRAIN_CMD
+
+            # 训练完成后，将模型复制到宿主机路径
+            echo ""
+            echo "=========================================="
+            echo "训练完成，复制模型到宿主机路径..."
+            echo "=========================================="
+
+            if [ -d "{{inputs.parameters.container_model_output_path}}" ]; then
+                # 复制到输出路径
+                cp -r "{{inputs.parameters.container_model_output_path}}"/* "{{inputs.parameters.container_model_output_path}}/../host_model_output/" || true
+
+                echo "模型文件列表:"
+                ls -lh "{{inputs.parameters.container_model_output_path}}/"
+
+                # 创建训练完成标记文件
+                cat > "{{inputs.parameters.container_model_output_path}}/training_completed.txt" << EOF
+                训练完成时间: $(date -Iseconds)
+                工作流UID: {{workflow.uid}}
+                工作流名称: {{workflow.name}}
+                模型名称: {{inputs.parameters.model_name}}
+                训练轮数: {{inputs.parameters.num_epochs}}
+                批次大小: {{inputs.parameters.batch_size}}
+                学习率: {{inputs.parameters.learning_rate}}
+                EOF
+
+                echo "训练完成标记已创建"
+            else
+                echo "警告: 输出目录不存在"
+                ls -lh "{{inputs.parameters.container_model_output_path}}/../"
+            fi
+
+            echo ""
+            echo "=========================================="
+            echo "训练流程完成 ✓"
+            echo "=========================================="
+        env:
+          - name: PYTHONPATH
+            value: "/app/lib/python"
+          - name: TRANSFORMERS_CACHE
+            value: "{{inputs.parameters.container_model_cache_path}}"
+          - name: HF_HOME
+            value: "{{inputs.parameters.container_model_cache_path}}"
+          - name: CUDA_VISIBLE_DEVICES
+            value: "0"
+          # 代理配置（用于下载模型）
+          - name: HTTPS_PROXY
+            value: "{{workflow.parameters.https_proxy}}"
+          - name: HTTP_PROXY
+            value: "{{workflow.parameters.http_proxy}}"
+          - name: https_proxy
+            value: "{{workflow.parameters.https_proxy}}"
+          - name: http_proxy
+            value: "{{workflow.parameters.http_proxy}}"
+        volumeMounts:
+          # 挂载宿主机路径用于模型缓存
+          - name: host-model-cache
+            mountPath: "{{inputs.parameters.container_model_cache_path}}"
+          # 挂载宿主机路径用于模型输出
+          - name: host-model-output
+            mountPath: "{{inputs.parameters.container_model_output_path}}/../host_model_output"
+          # 挂载PVC用于训练数据
+          - name: training-data-pvc
+            mountPath: "{{inputs.parameters.container_data_path}}"
+            readOnly: true
+          # 挂载工作空间
+          - name: workspace-volume
+            mountPath: /app
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4000m"
+            nvidia.com/gpu: "1"
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+            nvidia.com/gpu: "1"
+
+    # ==================== 5. 模型验证模板 ====================
+    - name: validate-model
+      inputs:
+        parameters:
+          - name: container_model_output_path
+        artifacts:
+          - name: source-code
+            path: /app
+      volumes:
+        - name: host-model-output
+          hostPath:
+            path: "{{workflow.parameters.host_model_output_path}}"
+            type: Directory
+      script:
+        image: python:3.10-slim
+        command: [python3, -c]
+        source: |
+          import os
+          import sys
+          import json
+
+          print("=" * 50)
+          print("步骤5: 模型验证")
+          print("=" * 50)
+
+          model_path = "{{inputs.parameters.container_model_output_path}}"
+
+          # 检查模型文件
+          required_files = [
+              "pytorch_model.bin",
+              "config.json",
+              "training_config.json",
+              "label_encoders.json"
+          ]
+
+          print("\n检查必需文件:")
+          missing_files = []
+          for file in required_files:
+              file_path = os.path.join(model_path, file)
+              if os.path.exists(file_path):
+                  print(f"  ✓ {file}")
+              else:
+                  print(f"  ✗ {file} (缺失)")
+                  missing_files.append(file)
+
+          if missing_files:
+              print(f"\n❌ 错误: 缺少必需文件: {missing_files}")
+              sys.exit(1)
+
+          # 读取并显示训练配置
+          config_path = os.path.join(model_path, "training_config.json")
+          with open(config_path, 'r', encoding='utf-8') as f:
+              train_config = json.load(f)
+
+          print("\n训练配置:")
+          for key, value in train_config.items():
+              print(f"  {key}: {value}")
+
+          # 读取评估结果（如果存在）
+          eval_results_path = os.path.join(model_path, "eval_results.json")
+          if os.path.exists(eval_results_path):
+              with open(eval_results_path, 'r', encoding='utf-8') as f:
+                  eval_results = json.load(f)
+
+              print("\n模型评估结果:")
+              for key, value in eval_results.items():
+                  if isinstance(value, float):
+                      print(f"  {key}: {value:.4f}")
+                  else:
+                      print(f"  {key}: {value}")
+
+              # 检查准确率
+              overall_acc = eval_results.get('eval_overall_accuracy', 0)
+              if overall_acc >= 0.8:
+                  print(f"\n✓ 模型准确率良好: {overall_acc:.4f}")
+              elif overall_acc >= 0.7:
+                  print(f"\n⚠ 模型准确率尚可: {overall_acc:.4f}")
+              else:
+                  print(f"\n⚠ 模型准确率较低: {overall_acc:.4f}")
+          else:
+              print("\n未找到评估结果文件")
+
+          # 计算模型大小
+          model_size = 0
+          for root, dirs, files in os.walk(model_path):
+              for file in files:
+                  file_path = os.path.join(root, file)
+                  if os.path.isfile(file_path):
+                      model_size += os.path.getsize(file_path)
+
+          model_size_mb = model_size / (1024 * 1024)
+          print(f"\n模型大小: {model_size_mb:.2f} MB")
+
+          print("\n" + "=" * 50)
+          print("模型验证完成 ✓")
+          print("=" * 50)
+        volumeMounts:
+          - name: host-model-output
+            mountPath: "{{inputs.parameters.container_model_output_path}}"
+            readOnly: true
+          - name: workspace-volume
+            mountPath: /app
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+    # ==================== 6. 构建推理服务镜像 ====================
+    - name: build-inference-image
+      inputs:
+        parameters:
+          - name: image_registry
+          - name: image_repository
+          - name: image_tag
+          - name: container_model_output_path
+          - name: host_model_output_path
+        artifacts:
+          - name: source-code
+            path: /src
+      volumes:
+        - name: host-model-output
+          hostPath:
+            path: "{{inputs.parameters.host_model_output_path}}"
+            type: Directory
+        - name: docker-registry-auth
+          secret:
+            secretName: docker-registry-secret
+            optional: true
+      container:
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - --context=/src
+          - --dockerfile=/src/Dockerfile
+          - --destination={{inputs.parameters.image_registry}}/{{inputs.parameters.image_repository}}:{{inputs.parameters.image_tag}}
+          - --cache=true
+          - --cache-dir=/cache
+          - --use-new-run  # 使用新的RUN命令语法
+          # 添加构建参数
+          - --build-arg=MODEL_PATH=/app/models
+          - --build-arg=NODE_ENV=production
+        env:
+          # 如果需要认证，配置环境变量
+          - name: DOCKER_CONFIG
+            value: /kaniko/.docker
+        volumeMounts:
+          # 挂载模型文件到构建上下文
+          - name: host-model-output
+            mountPath: /src/models
+          - name: workspace-volume
+            mountPath: /cache
+          # 如果有镜像仓库认证
+          - name: docker-registry-auth
+            mountPath: /kaniko/.docker
+            readOnly: true
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+    # ==================== 7. 部署验证模板 ====================
+    - name: verify-deployment
+      inputs:
+        parameters:
+          - name: image_registry
+          - name: image_repository
+          - name: image_tag
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+
+            echo "=========================================="
+            echo "步骤7: 验证部署"
+            echo "=========================================="
+
+            IMAGE="{{inputs.parameters.image_registry}}/{{inputs.parameters.image_repository}}:{{inputs.parameters.image_tag}}"
+            echo "构建的镜像: $IMAGE"
+
+            # 验证镜像是否存在（可以通过docker或crictl）
+            echo ""
+            echo "镜像已成功推送到仓库"
+            echo "镜像标签: {{inputs.parameters.image_tag}}"
+            echo "推送时间: $(date -Iseconds)"
+            echo "工作流UID: {{workflow.uid}}"
+
+            echo ""
+            echo "=========================================="
+            echo "部署验证完成 ✓"
+            echo "=========================================="
+            echo ""
+            echo "后续步骤:"
+            echo "1. 更新 Kubernetes Deployment 使用新镜像"
+            echo "2. 执行滚动更新: kubectl rollout restart deployment/intent-bert"
+            echo "3. 验证服务健康状态: kubectl get pods -l app=intent-bert"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+
+    # ==================== 8. 清理模板 ====================
+    - name: cleanup
+      inputs:
+        parameters:
+          - name: container_model_cache_path
+      container:
+        image: alpine:latest
+        command:
+          - sh
+          - -c
+          - |
+            echo "=========================================="
+            echo "步骤8: 清理临时文件"
+            echo "=========================================="
+
+            # 清理缓存中的临时文件（保留模型文件）
+            if [ -d "{{inputs.parameters.container_model_cache_path}}" ]; then
+                find "{{inputs.parameters.container_model_cache_path}}" -name "*.tmp" -delete 2>/dev/null || true
+                find "{{inputs.parameters.container_model_cache_path}}" -name "*.lock" -delete 2>/dev/null || true
+                echo "已清理缓存临时文件"
+            fi
+
+            echo "清理完成 ✓"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+    # ==================== 主Pipeline ====================
+    - name: bert-training-pipeline
+      inputs:
+        parameters:
+          - name: repo_url
+          - name: branch
+          - name: git_revision
+          - name: pvc_name
+          - name: pvc_train_data_path
+          - name: pvc_val_data_path
+          - name: pvc_config_path
+          - name: model_name
+          - name: batch_size
+          - name: num_epochs
+          - name: learning_rate
+          - name: max_length
+          - name: warmup_steps
+          - name: weight_decay
+          - name: host_model_download_path
+          - name: host_model_output_path
+          - name: container_model_cache_path
+          - name: container_model_output_path
+          - name: container_data_path
+          - name: image_registry
+          - name: image_repository
+          - name: image_tag
+          - name: training_image
+      steps:
+        # 步骤1: 拉取源码
+        - - name: checkout
+            template: checkout-source
+            arguments:
+              parameters:
+                - name: repo_url
+                  value: "{{inputs.parameters.repo_url}}"
+                - name: branch
+                  value: "{{inputs.parameters.branch}}"
+                - name: git_revision
+                  value: "{{inputs.parameters.git_revision}}"
+
+        # 步骤2: 准备训练数据（与步骤1并行执行，不依赖源码）
+        - - name: prepare-data
+            template: prepare-training-data
+            arguments:
+              parameters:
+                - name: pvc_name
+                  value: "{{inputs.parameters.pvc_name}}"
+                - name: pvc_train_data_path
+                  value: "{{inputs.parameters.pvc_train_data_path}}"
+                - name: pvc_val_data_path
+                  value: "{{inputs.parameters.pvc_val_data_path}}"
+                - name: pvc_config_path
+                  value: "{{inputs.parameters.pvc_config_path}}"
+                - name: container_data_path
+                  value: "{{inputs.parameters.container_data_path}}"
+
+        # 步骤3: 安装依赖（依赖源码拉取完成）
+        - - name: install-deps
+            template: install-dependencies
+            arguments:
+              artifacts:
+                - name: source-code
+                  from: "{{steps.checkout.outputs.artifacts.source-code}}"
+
+        # 步骤4: 训练BERT模型（依赖源码和数据准备）
+        - - name: train-model
+            template: train-bert-model
+            arguments:
+              parameters:
+                - name: model_name
+                  value: "{{inputs.parameters.model_name}}"
+                - name: batch_size
+                  value: "{{inputs.parameters.batch_size}}"
+                - name: num_epochs
+                  value: "{{inputs.parameters.num_epochs}}"
+                - name: learning_rate
+                  value: "{{inputs.parameters.learning_rate}}"
+                - name: max_length
+                  value: "{{inputs.parameters.max_length}}"
+                - name: warmup_steps
+                  value: "{{inputs.parameters.warmup_steps}}"
+                - name: weight_decay
+                  value: "{{inputs.parameters.weight_decay}}"
+                - name: container_model_cache_path
+                  value: "{{inputs.parameters.container_model_cache_path}}"
+                - name: container_model_output_path
+                  value: "{{inputs.parameters.container_model_output_path}}"
+                - name: container_data_path
+                  value: "{{inputs.parameters.container_data_path}}"
+                - name: host_model_download_path
+                  value: "{{inputs.parameters.host_model_download_path}}"
+                - name: host_model_output_path
+                  value: "{{inputs.parameters.host_model_output_path}}"
+              artifacts:
+                - name: source-code
+                  from: "{{steps.checkout.outputs.artifacts.source-code}}"
+
+        # 步骤5: 验证模型
+        - - name: validate
+            template: validate-model
+            arguments:
+              parameters:
+                - name: container_model_output_path
+                  value: "{{inputs.parameters.container_model_output_path}}"
+              artifacts:
+                - name: source-code
+                  from: "{{steps.checkout.outputs.artifacts.source-code}}"
+
+        # 步骤6: 构建推理服务镜像
+        - - name: build-image
+            template: build-inference-image
+            arguments:
+              parameters:
+                - name: image_registry
+                  value: "{{inputs.parameters.image_registry}}"
+                - name: image_repository
+                  value: "{{inputs.parameters.image_repository}}"
+                - name: image_tag
+                  value: "{{inputs.parameters.image_tag}}-{{workflow.uid}}"
+                - name: container_model_output_path
+                  value: "{{inputs.parameters.container_model_output_path}}"
+                - name: host_model_output_path
+                  value: "{{inputs.parameters.host_model_output_path}}"
+              artifacts:
+                - name: source-code
+                  from: "{{steps.checkout.outputs.artifacts.source-code}}"
+
+        # 步骤7: 验证部署
+        - - name: verify
+            template: verify-deployment
+            arguments:
+              parameters:
+                - name: image_registry
+                  value: "{{inputs.parameters.image_registry}}"
+                - name: image_repository
+                  value: "{{inputs.parameters.image_repository}}"
+                - name: image_tag
+                  value: "{{inputs.parameters.image_tag}}-{{workflow.uid}}"
+
+        # 步骤8: 清理（无论成功失败都执行）
+        - - name: cleanup-resources
+            template: cleanup
+            arguments:
+              parameters:
+                - name: container_model_cache_path
+                  value: "{{inputs.parameters.container_model_cache_path}}"

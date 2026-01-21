@@ -62,14 +62,16 @@ spec:
       # 节点本地路径配置（模型下载和结果存储）
       - name: host_model_download_path
         value: "/mnt/models/cache"  # 预训练模型下载缓存路径
-      - name: host_model_output_path
-        value: "/mnt/models/bert-output"  # 训练结果输出路径
+      - name: host_model_output_base_path
+        value: "/mnt/models/bert-output"  # 训练结果输出基础路径
 
       # 容器内路径
       - name: container_model_cache_path
         value: "/app/.cache/models"  # 预训练模型缓存容器路径
       - name: container_model_output_path
         value: "/app/models"  # 训练输出容器路径
+      - name: training_timestamp
+        value: "{{workflow.creationTimestamp}}"  # 训练时间戳
       - name: container_data_path
         value: "/data"  # 训练数据容器路径
 
@@ -314,7 +316,8 @@ spec:
           - name: container_model_output_path
           - name: container_data_path
           - name: host_model_download_path
-          - name: host_model_output_path
+          - name: host_model_output_base_path
+          - name: training_timestamp
         artifacts:
           - name: source-code
             path: /src
@@ -324,10 +327,10 @@ spec:
           hostPath:
             path: "{{inputs.parameters.host_model_download_path}}"
             type: DirectoryOrCreate
-        # 节点本地路径 - 用于训练结果输出
+        # 节点本地路径 - 用于训练结果输出（带时间戳）
         - name: host-model-output
           hostPath:
-            path: "{{inputs.parameters.host_model_output_path}}"
+            path: "{{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}"
             type: DirectoryOrCreate
         # PVC - 用于挂载训练数据
         - name: training-data-pvc
@@ -398,21 +401,22 @@ spec:
             echo "开始训练..."
             $TRAIN_CMD
 
-            # 训练完成后，将模型复制到宿主机路径
+            # 训练完成，模型已保存到宿主机路径
             echo ""
             echo "=========================================="
-            echo "训练完成，复制模型到宿主机路径..."
+            echo "训练完成！"
             echo "=========================================="
+            echo "模型已保存到: {{inputs.parameters.container_model_output_path}}"
+            echo "宿主机路径: {{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}"
+            echo ""
 
             if [ -d "{{inputs.parameters.container_model_output_path}}" ]; then
-                # 复制到输出路径
-                cp -r "{{inputs.parameters.container_model_output_path}}"/* "{{inputs.parameters.container_model_output_path}}/../host_model_output/" || true
-
                 echo "模型文件列表:"
                 ls -lh "{{inputs.parameters.container_model_output_path}}/"
+                echo ""
 
-                # 创建训练完成标记文件
-                cat > "{{inputs.parameters.container_model_output_path}}/training_completed.txt" << EOF
+                # 创建训练完成标记文件（使用 <<-EOF 忽略前导制表符）
+                cat > "{{inputs.parameters.container_model_output_path}}/training_completed.txt" <<-EOF
                 训练完成时间: $(date -Iseconds)
                 工作流UID: {{workflow.uid}}
                 工作流名称: {{workflow.name}}
@@ -420,12 +424,13 @@ spec:
                 训练轮数: {{inputs.parameters.num_epochs}}
                 批次大小: {{inputs.parameters.batch_size}}
                 学习率: {{inputs.parameters.learning_rate}}
+                宿主机保存路径: {{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}
                 EOF
 
-                echo "训练完成标记已创建"
+                echo "✓ 训练完成标记已创建"
             else
                 echo "警告: 输出目录不存在"
-                ls -lh "{{inputs.parameters.container_model_output_path}}/../"
+                ls -lh "{{inputs.parameters.container_model_output_path}}/../" || true
             fi
 
             echo ""
@@ -454,9 +459,9 @@ spec:
           # 挂载宿主机路径用于模型缓存
           - name: host-model-cache
             mountPath: "{{inputs.parameters.container_model_cache_path}}"
-          # 挂载宿主机路径用于模型输出
+          # 挂载宿主机路径用于模型输出（直接挂载，模型保存到宿主机）
           - name: host-model-output
-            mountPath: "{{inputs.parameters.container_model_output_path}}/../host_model_output"
+            mountPath: "{{inputs.parameters.container_model_output_path}}"
           # 挂载PVC用于训练数据
           - name: training-data-pvc
             mountPath: "{{inputs.parameters.container_data_path}}"
@@ -474,13 +479,15 @@ spec:
       inputs:
         parameters:
           - name: container_model_output_path
+          - name: host_model_output_base_path
+          - name: training_timestamp
         artifacts:
           - name: source-code
             path: /src
       volumes:
         - name: host-model-output
           hostPath:
-            path: "{{workflow.parameters.host_model_output_path}}"
+            path: "{{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}"
             type: Directory
       script:
         image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
@@ -587,14 +594,15 @@ spec:
           - name: image_repository
           - name: image_tag
           - name: container_model_output_path
-          - name: host_model_output_path
+          - name: host_model_output_base_path
+          - name: training_timestamp
         artifacts:
           - name: source-code
             path: /src
       volumes:
         - name: host-model-output
           hostPath:
-            path: "{{inputs.parameters.host_model_output_path}}"
+            path: "{{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}"
             type: Directory
         - name: docker-registry-auth
           secret:
@@ -793,8 +801,10 @@ spec:
                   value: "{{inputs.parameters.container_data_path}}"
                 - name: host_model_download_path
                   value: "{{inputs.parameters.host_model_download_path}}"
-                - name: host_model_output_path
-                  value: "{{inputs.parameters.host_model_output_path}}"
+                - name: host_model_output_base_path
+                  value: "{{inputs.parameters.host_model_output_base_path}}"
+                - name: training_timestamp
+                  value: "{{inputs.parameters.training_timestamp}}"
               artifacts:
                 - name: source-code
                   from: "{{steps.checkout.outputs.artifacts.source-code}}"
@@ -806,6 +816,10 @@ spec:
               parameters:
                 - name: container_model_output_path
                   value: "{{inputs.parameters.container_model_output_path}}"
+                - name: host_model_output_base_path
+                  value: "{{inputs.parameters.host_model_output_base_path}}"
+                - name: training_timestamp
+                  value: "{{inputs.parameters.training_timestamp}}"
               artifacts:
                 - name: source-code
                   from: "{{steps.checkout.outputs.artifacts.source-code}}"
@@ -823,8 +837,10 @@ spec:
                   value: "{{inputs.parameters.image_tag}}-{{workflow.uid}}"
                 - name: container_model_output_path
                   value: "{{inputs.parameters.container_model_output_path}}"
-                - name: host_model_output_path
-                  value: "{{inputs.parameters.host_model_output_path}}"
+                - name: host_model_output_base_path
+                  value: "{{inputs.parameters.host_model_output_base_path}}"
+                - name: training_timestamp
+                  value: "{{inputs.parameters.training_timestamp}}"
               artifacts:
                 - name: source-code
                   from: "{{steps.checkout.outputs.artifacts.source-code}}"

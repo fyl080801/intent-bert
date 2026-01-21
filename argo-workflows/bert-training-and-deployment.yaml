@@ -29,7 +29,7 @@ spec:
       - name: repo_url
         value: "https://github.com/fyl080801/intent-bert.git"
       - name: branch
-        value: "main"
+        value: "configlabels"
       - name: git_revision
         value: ""
 
@@ -294,82 +294,13 @@ spec:
             memory: "512Mi"
             cpu: "500m"
 
-    # ==================== 3. 安装依赖模板（使用GPU）====================
-    - name: install-dependencies
-      inputs:
-        artifacts:
-          - name: source-code
-            path: /src
-      script:
-        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
-        command: [bash, -c]
-        source: |
-          set -e
-
-          echo "=========================================="
-          echo "步骤3: 安装Python依赖（CUDA版本）"
-          echo "=========================================="
-
-          cd /src
-
-          # 使用阿里云镜像安装CUDA版本的PyTorch
-          echo "安装 PyTorch CUDA 版本（这可能需要几分钟）..."
-          pip install --no-cache-dir \
-            torch>=2.0.0 \
-            torchvision>=0.15.0 \
-            --index-url https://mirrors.aliyun.com/pypi/simple/ \
-            --trusted-host mirrors.aliyun.com
-
-          echo "✓ PyTorch 安装完成"
-
-          # 安装其他依赖
-          echo "安装其他ML依赖..."
-          pip install --no-cache-dir \
-            transformers>=4.30.0 \
-            tokenizers>=0.13.0 \
-            datasets>=2.12.0 \
-            evaluate>=0.4.0 \
-            pandas>=2.0.0 \
-            numpy>=1.24.0 \
-            scikit-learn>=1.3.0 \
-            scipy>=1.10.0 \
-            flask>=2.3.0 \
-            flask-cors>=4.0.0 \
-            requests>=2.31.0 \
-            tqdm>=4.65.0 \
-            pyyaml>=6.0 \
-            --index-url https://mirrors.aliyun.com/pypi/simple/ \
-            --trusted-host mirrors.aliyun.com
-
-          echo "✓ 所有依赖安装完成"
-
-          # 验证CUDA支持
-          echo ""
-          echo "=========================================="
-          echo "验证CUDA支持"
-          echo "=========================================="
-          python3 -c "import torch; print(f'PyTorch 版本: {torch.__version__}'); print(f'CUDA 可用: {torch.cuda.is_available()}'); print(f'CUDA 版本: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}') if torch.cuda.is_available() else print('GPU 数量: 0'); print('✓ CUDA 配置验证完成')"
-
-
-          echo ""
-          echo "=========================================="
-          echo "已安装的包列表"
-          echo "=========================================="
-          pip list | grep -E "(torch|transformers|pandas|flask)"
-
-        resources:
-          requests:
-            memory: "8Gi"
-            cpu: "4000m"
-          limits:
-            memory: "16Gi"
-            cpu: "8000m"
-
-    # ==================== 4. BERT模型训练模板（CUDA支持）====================
+    # ==================== 3. BERT模型训练模板（CUDA支持）====================
     - name: train-bert-model
       # 使用节点亲和性选择 GPU 节点
       nodeSelector:
-        GPU.COUNT: "1"
+        nvidia.com/gpu.count: "1"
+      # 使用 podSpecPatch 来设置 runtimeClassName
+      podSpecPatch: '{"runtimeClassName":"nvidia"}'
       inputs:
         parameters:
           - name: model_name
@@ -403,7 +334,7 @@ spec:
           persistentVolumeClaim:
             claimName: "{{workflow.parameters.pvc_name}}"
       container:
-        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
+        image: 192.168.68.95:31443/docker.io/pytorch/pytorch:2.1.2-cuda11.8-cudnn8-runtime
         command: [bash, -c]
         args:
           - |
@@ -414,6 +345,24 @@ spec:
             echo "=========================================="
 
             cd /src
+
+            # 安装训练所需的依赖（使用兼容版本）
+            echo "安装训练依赖..."
+            pip install --no-cache-dir \
+              transformers==4.38.0 \
+              tokenizers>=0.15.0 \
+              datasets>=2.14 \
+              accelerate>=0.26 \
+              scikit-learn>=1.3.0 \
+              pandas>=2.0.0 \
+              numpy>=1.24.0 \
+              scipy>=1.10.0 \
+              tqdm>=4.65.0 \
+              pyyaml>=6.0 \
+              --index-url https://mirrors.aliyun.com/pypi/simple/ \
+              --trusted-host mirrors.aliyun.com
+
+            echo "✓ 依赖安装完成"
 
             # 配置环境变量
             export PYTHONPATH=/src/lib/python:$PYTHONPATH
@@ -519,14 +468,14 @@ spec:
             memory: "32Gi"
             cpu: "16000m"
 
-    # ==================== 5. 模型验证模板 ====================
+    # ==================== 4. 模型验证模板 ====================
     - name: validate-model
       inputs:
         parameters:
           - name: container_model_output_path
         artifacts:
           - name: source-code
-            path: /app
+            path: /src
       volumes:
         - name: host-model-output
           hostPath:
@@ -629,7 +578,7 @@ spec:
             memory: "2Gi"
             cpu: "1000m"
 
-    # ==================== 6. 构建推理服务镜像 ====================
+    # ==================== 5. 构建推理服务镜像 ====================
     - name: build-inference-image
       inputs:
         parameters:
@@ -684,7 +633,7 @@ spec:
             memory: "4Gi"
             cpu: "2000m"
 
-    # ==================== 7. 部署验证模板 ====================
+    # ==================== 6. 部署验证模板 ====================
     - name: verify-deployment
       inputs:
         parameters:
@@ -729,7 +678,7 @@ spec:
             memory: "128Mi"
             cpu: "200m"
 
-    # ==================== 8. 清理模板 ====================
+    # ==================== 7. 清理模板 ====================
     - name: cleanup
       inputs:
         parameters:
@@ -816,15 +765,7 @@ spec:
                 - name: container_data_path
                   value: "{{inputs.parameters.container_data_path}}"
 
-        # 步骤3: 安装依赖（使用GPU加速）
-        - - name: install-deps
-            template: install-dependencies
-            arguments:
-              artifacts:
-                - name: source-code
-                  from: "{{steps.checkout.outputs.artifacts.source-code}}"
-
-        # 步骤4: 训练BERT模型（依赖源码和数据准备）
+        # 步骤3: 训练BERT模型（依赖源码和数据准备）
         - - name: train-model
             template: train-bert-model
             arguments:

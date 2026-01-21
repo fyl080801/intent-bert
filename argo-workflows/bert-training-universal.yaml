@@ -201,10 +201,10 @@ spec:
           print(f"  标签类型: {dataset_config.get('label_type')}")
           print(f"  训练脚本: {dataset_config.get('training_script')}")
 
-          # 验证数据文件存在
+          # 验证数据文件存在（数据文件在源码中）
           data_paths = dataset_config.get('data_paths', {})
           for split_name, file_path in data_paths.items():
-              full_path = os.path.join(data_path, file_path)
+              full_path = file_path  # 相对于 /src 的路径
               if not os.path.exists(full_path):
                   print(f"❌ 错误: {split_name} 数据文件不存在: {full_path}")
                   sys.exit(1)
@@ -213,9 +213,8 @@ spec:
           # 验证配置文件（如果存在）
           config_path = dataset_config.get('config_path')
           if config_path:
-              full_config_path = os.path.join(data_path, config_path)
-              if not os.path.exists(full_config_path):
-                  print(f"❌ 错误: 配置文件不存在: {full_config_path}")
+              if not os.path.exists(config_path):
+                  print(f"❌ 错误: 配置文件不存在: {config_path}")
                   sys.exit(1)
               print(f"  ✓ 配置文件: {config_path}")
 

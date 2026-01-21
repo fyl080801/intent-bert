@@ -415,17 +415,17 @@ spec:
                 ls -lh "{{inputs.parameters.container_model_output_path}}/"
                 echo ""
 
-                # 创建训练完成标记文件（使用 <<-EOF 忽略前导制表符）
-                cat > "{{inputs.parameters.container_model_output_path}}/training_completed.txt" <<-EOF
-                训练完成时间: $(date -Iseconds)
-                工作流UID: {{workflow.uid}}
-                工作流名称: {{workflow.name}}
-                模型名称: {{inputs.parameters.model_name}}
-                训练轮数: {{inputs.parameters.num_epochs}}
-                批次大小: {{inputs.parameters.batch_size}}
-                学习率: {{inputs.parameters.learning_rate}}
-                宿主机保存路径: {{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}
-                EOF
+                # 创建训练完成标记文件
+                {
+                    echo "训练完成时间: $(date -Iseconds)"
+                    echo "工作流UID: {{workflow.uid}}"
+                    echo "工作流名称: {{workflow.name}}"
+                    echo "模型名称: {{inputs.parameters.model_name}}"
+                    echo "训练轮数: {{inputs.parameters.num_epochs}}"
+                    echo "批次大小: {{inputs.parameters.batch_size}}"
+                    echo "学习率: {{inputs.parameters.learning_rate}}"
+                    echo "宿主机保存路径: {{inputs.parameters.host_model_output_base_path}}/{{inputs.parameters.training_timestamp}}"
+                } > "{{inputs.parameters.container_model_output_path}}/training_completed.txt"
 
                 echo "✓ 训练完成标记已创建"
             else
@@ -503,9 +503,9 @@ spec:
 
           model_path = "{{inputs.parameters.container_model_output_path}}"
 
-          # 检查模型文件
+          # 检查模型文件（支持 safetensors 和 pytorch_model.bin 两种格式）
+          model_files = ["model.safetensors", "pytorch_model.bin"]
           required_files = [
-              "pytorch_model.bin",
               "config.json",
               "training_config.json",
               "label_encoders.json"
@@ -513,6 +513,20 @@ spec:
 
           print("\n检查必需文件:")
           missing_files = []
+
+          # 检查模型文件（至少存在一个）
+          model_found = False
+          for mf in model_files:
+              file_path = os.path.join(model_path, mf)
+              if os.path.exists(file_path):
+                  print(f"  ✓ {mf}")
+                  model_found = True
+                  break
+          if not model_found:
+              print(f"  ✗ 模型文件 (缺失: 需要 {model_files} 中的一个)")
+              missing_files.append("model.safetensors 或 pytorch_model.bin")
+
+          # 检查其他必需文件
           for file in required_files:
               file_path = os.path.join(model_path, file)
               if os.path.exists(file_path):

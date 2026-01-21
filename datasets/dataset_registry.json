@@ -1,0 +1,109 @@
+{
+  "version": "1.0",
+  "description": "数据集注册表 - 统一管理所有训练数据集的元信息",
+  "datasets": {
+    "financial_intent_fixed": {
+      "name": "金融意图分类（固定三级）",
+      "task_type": "hierarchical",
+      "label_type": "multi_level",
+      "level_config": "fixed",
+      "num_levels": 3,
+      "data_paths": {
+        "train": "datasets/financial_intent_fixed/train.csv",
+        "validation": "datasets/financial_intent_fixed/val.csv"
+      },
+      "config_path": "datasets/financial_intent_fixed/config.json",
+      "label_columns": ["label_level1", "label_level2", "label_level3"],
+      "text_column": "text",
+      "training_script": "train.py",
+      "model_class": "BertForMultiLabelClassification",
+      "description": "固定三级金融意图分类，包含投资理财、信贷服务等6大一级类别",
+      "languages": ["zh"],
+      "created_at": "2024-01-01"
+    },
+    "financial_intent_dynamic": {
+      "name": "金融意图分类（动态多级）",
+      "task_type": "hierarchical",
+      "label_type": "multi_level",
+      "level_config": "dynamic",
+      "num_levels": null,
+      "data_paths": {
+        "train": "datasets/financial_intent_dynamic/train.csv",
+        "validation": "datasets/financial_intent_dynamic/val.csv"
+      },
+      "config_path": "datasets/financial_intent_dynamic/hierarchy_config.json",
+      "label_columns": ["label_level1", "label_level2", "label_level3"],
+      "text_column": "text",
+      "training_script": "train_dynamic.py",
+      "model_class": "BertForDynamicHierarchicalClassification",
+      "description": "动态多级金融意图分类，支持非固定层级的标签结构",
+      "languages": ["zh"],
+      "created_at": "2024-01-01"
+    },
+    "jd_sentiment": {
+      "name": "京东商品评论情感分析",
+      "task_type": "classification",
+      "label_type": "single_label",
+      "level_config": null,
+      "num_levels": 1,
+      "data_paths": {
+        "train": "datasets/jd_sentiment/train.csv",
+        "validation": "datasets/jd_sentiment/val.csv"
+      },
+      "config_path": null,
+      "label_columns": ["label"],
+      "text_column": "sentence",
+      "num_labels": 2,
+      "label_names": ["negative", "positive"],
+      "training_script": "train_single_label.py",
+      "model_class": "BertForSingleLabelClassification",
+      "description": "京东商品评论情感二分类（正面/负面）",
+      "languages": ["zh"],
+      "created_at": "2024-01-01"
+    }
+  },
+  "task_types": {
+    "single_label": {
+      "description": "单标签分类 - 每个样本属于一个类别",
+      "required_fields": ["text", "label"],
+      "optional_fields": ["id", "metadata"],
+      "label_format": "single_column",
+      "example_format": {
+        "text": "商品质量很好",
+        "label": 1
+      }
+    },
+    "multi_label": {
+      "description": "多标签分类 - 每个样本可属于多个类别",
+      "required_fields": ["text", "labels"],
+      "optional_fields": ["id", "metadata"],
+      "label_format": "list_or_json",
+      "example_format": {
+        "text": "这个手机既是高端机又是游戏机",
+        "labels": [1, 5, 8]
+      }
+    },
+    "hierarchical": {
+      "description": "层级分类 - 标签具有层级关系",
+      "required_fields": ["text"],
+      "optional_fields": ["id", "metadata"],
+      "label_format": "multi_column",
+      "example_format": {
+        "text": "如何购买基金",
+        "label_level1": "投资理财",
+        "label_level2": "基金投资",
+        "label_level3": "开放式基金"
+      },
+      "supports": ["fixed_levels", "dynamic_levels"]
+    }
+  },
+  "label_types": {
+    "single_label": "每个样本只有一个标签",
+    "multi_label": "每个样本可以有多个标签（多任务学习）",
+    "multi_level": "标签具有层级结构，每个层级一个标签"
+  },
+  "level_configs": {
+    "fixed": "固定层级数量，如固定的3级分类",
+    "dynamic": "动态层级，支持可变深度的标签树"
+  }
+}

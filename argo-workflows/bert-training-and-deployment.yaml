@@ -116,7 +116,7 @@ spec:
           - name: source-code
             path: /src
       script:
-        image: alpine/git:latest
+        image: 192.168.68.95:31443/docker.io/alpine/git:latest
         command: [sh, -c]
         source: |
           set -e
@@ -154,6 +154,15 @@ spec:
           echo "作者: $(git log -1 --pretty=format:'%an')"
           echo "时间: $(git log -1 --pretty=format:'%ai')"
           echo "提交信息: $(git log -1 --pretty=format:'%s')"
+        env:
+          - name: HTTPS_PROXY
+            value: "http://192.168.68.95:25041"
+          - name: HTTP_PROXY
+            value: "http://192.168.68.95:25041"
+          - name: https_proxy
+            value: "http://192.168.68.95:25041"
+          - name: http_proxy
+            value: "http://192.168.68.95:25041"
         volumeMounts:
           - name: workspace-volume
             mountPath: /src
@@ -179,11 +188,23 @@ spec:
           persistentVolumeClaim:
             claimName: "{{inputs.parameters.pvc_name}}"
       script:
-        image: python:3.10-slim
-        command: [python3, -c]
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
+        command: [python3]
         source: |
-          import os
+          import subprocess
           import sys
+          import os
+
+          # 安装必要的依赖
+          print("安装依赖包...")
+          # 使用阿里云 pip 源加速
+          subprocess.check_call([
+              sys.executable, "-m", "pip", "install", "pandas",
+              "-i", "https://mirrors.aliyun.com/pypi/simple/",
+              "--trusted-host", "mirrors.aliyun.com",
+              "--quiet"
+          ])
+
           import json
           import pandas as pd
 
@@ -273,77 +294,82 @@ spec:
             memory: "512Mi"
             cpu: "500m"
 
-    # ==================== 3. 安装依赖模板 ====================
+    # ==================== 3. 安装依赖模板（使用GPU）====================
     - name: install-dependencies
       inputs:
         artifacts:
           - name: source-code
-            path: /app
+            path: /src
       script:
-        image: python:3.10-slim
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
         command: [bash, -c]
         source: |
           set -e
 
           echo "=========================================="
-          echo "步骤3: 安装Python依赖"
+          echo "步骤3: 安装Python依赖（CUDA版本）"
           echo "=========================================="
 
-          cd /app
+          cd /src
 
-          # 安装Node.js依赖（如果需要构建前端）
-          echo "安装Node.js依赖..."
-          if [ -f "package.json" ]; then
-              npm install --production || echo "警告: npm install 失败，但继续执行"
-          fi
+          # 使用阿里云镜像安装CUDA版本的PyTorch
+          echo "安装 PyTorch CUDA 版本（这可能需要几分钟）..."
+          pip install --no-cache-dir \
+            torch>=2.0.0 \
+            torchvision>=0.15.0 \
+            --index-url https://mirrors.aliyun.com/pypi/simple/ \
+            --trusted-host mirrors.aliyun.com
 
-          # 安装Python依赖
-          echo "安装Python依赖..."
-          if [ -f "lib/requirements.txt" ]; then
-              pip install --no-cache-dir -r lib/requirements.txt
-          else
-              echo "警告: lib/requirements.txt 不存在"
-              # 安装基础依赖
-              pip install --no-cache-dir \
-                  torch>=2.0.0 \
-                  transformers>=4.30.0 \
-                  pandas>=2.0.0 \
-                  numpy>=1.24.0 \
-                  scikit-learn>=1.3.0 \
-                  flask>=2.3.0 \
-                  flask-cors>=4.0.0
-          fi
+          echo "✓ PyTorch 安装完成"
 
-          echo "依赖安装完成"
-          pip list | grep -E "(torch|transformers|pandas)"
+          # 安装其他依赖
+          echo "安装其他ML依赖..."
+          pip install --no-cache-dir \
+            transformers>=4.30.0 \
+            tokenizers>=0.13.0 \
+            datasets>=2.12.0 \
+            evaluate>=0.4.0 \
+            pandas>=2.0.0 \
+            numpy>=1.24.0 \
+            scikit-learn>=1.3.0 \
+            scipy>=1.10.0 \
+            flask>=2.3.0 \
+            flask-cors>=4.0.0 \
+            requests>=2.31.0 \
+            tqdm>=4.65.0 \
+            pyyaml>=6.0 \
+            --index-url https://mirrors.aliyun.com/pypi/simple/ \
+            --trusted-host mirrors.aliyun.com
 
+          echo "✓ 所有依赖安装完成"
+
+          # 验证CUDA支持
+          echo ""
           echo "=========================================="
-          echo "Python环境信息:"
+          echo "验证CUDA支持"
           echo "=========================================="
-          python3 --version
-          pip --version
-        env:
-          - name: HTTPS_PROXY
-            value: "{{workflow.parameters.https_proxy}}"
-          - name: HTTP_PROXY
-            value: "{{workflow.parameters.http_proxy}}"
-          - name: https_proxy
-            value: "{{workflow.parameters.https_proxy}}"
-          - name: http_proxy
-            value: "{{workflow.parameters.http_proxy}}"
-        volumeMounts:
-          - name: workspace-volume
-            mountPath: /app
+          python3 -c "import torch; print(f'PyTorch 版本: {torch.__version__}'); print(f'CUDA 可用: {torch.cuda.is_available()}'); print(f'CUDA 版本: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}') if torch.cuda.is_available() else print('GPU 数量: 0'); print('✓ CUDA 配置验证完成')"
+
+
+          echo ""
+          echo "=========================================="
+          echo "已安装的包列表"
+          echo "=========================================="
+          pip list | grep -E "(torch|transformers|pandas|flask)"
+
         resources:
           requests:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "8Gi"
+            cpu: "4000m"
           limits:
-            memory: "4Gi"
-            cpu: "2000m"
+            memory: "16Gi"
+            cpu: "8000m"
 
     # ==================== 4. BERT模型训练模板（CUDA支持）====================
     - name: train-bert-model
+      # 使用节点亲和性选择 GPU 节点
+      nodeSelector:
+        GPU.COUNT: "1"
       inputs:
         parameters:
           - name: model_name
@@ -377,7 +403,7 @@ spec:
           persistentVolumeClaim:
             claimName: "{{workflow.parameters.pvc_name}}"
       container:
-        image: python:3.10-slim
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
         command: [bash, -c]
         args:
           - |
@@ -394,7 +420,7 @@ spec:
             export TRANSFORMERS_CACHE="{{inputs.parameters.container_model_cache_path}}"
             export HF_HOME="{{inputs.parameters.container_model_cache_path}}"
 
-            # 检测CUDA是否可用
+            # 检测CUDA是否可用（验证 runtimeClassName 是否生效）
             echo "检测CUDA环境..."
             python3 -c "import torch; print(f'CUDA可用: {torch.cuda.is_available()}'); print(f'CUDA版本: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}'); print(f'GPU数量: {torch.cuda.device_count()}')"
 
@@ -485,18 +511,13 @@ spec:
           - name: training-data-pvc
             mountPath: "{{inputs.parameters.container_data_path}}"
             readOnly: true
-          # 挂载工作空间
-          - name: workspace-volume
-            mountPath: /app
         resources:
           requests:
-            memory: "8Gi"
-            cpu: "4000m"
-            nvidia.com/gpu: "1"
-          limits:
             memory: "16Gi"
             cpu: "8000m"
-            nvidia.com/gpu: "1"
+          limits:
+            memory: "32Gi"
+            cpu: "16000m"
 
     # ==================== 5. 模型验证模板 ====================
     - name: validate-model
@@ -512,8 +533,8 @@ spec:
             path: "{{workflow.parameters.host_model_output_path}}"
             type: Directory
       script:
-        image: python:3.10-slim
-        command: [python3, -c]
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
+        command: [python3]
         source: |
           import os
           import sys
@@ -630,7 +651,7 @@ spec:
             secretName: docker-registry-secret
             optional: true
       container:
-        image: gcr.io/kaniko-project/executor:latest
+        image: 192.168.68.95:31443/gcr.io/kaniko-project/executor:latest
         args:
           - --context=/src
           - --dockerfile=/src/Dockerfile
@@ -671,7 +692,7 @@ spec:
           - name: image_repository
           - name: image_tag
       container:
-        image: curlimages/curl:latest
+        image: 192.168.68.95:31443/docker.io/curlimages/curl:latest
         command: [sh, -c]
         args:
           - |
@@ -714,7 +735,7 @@ spec:
         parameters:
           - name: container_model_cache_path
       container:
-        image: alpine:latest
+        image: 192.168.68.95:31443/docker.io/library/alpine:latest
         command:
           - sh
           - -c
@@ -795,7 +816,7 @@ spec:
                 - name: container_data_path
                   value: "{{inputs.parameters.container_data_path}}"
 
-        # 步骤3: 安装依赖（依赖源码拉取完成）
+        # 步骤3: 安装依赖（使用GPU加速）
         - - name: install-deps
             template: install-dependencies
             arguments:

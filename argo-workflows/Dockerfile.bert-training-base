@@ -1,0 +1,76 @@
+# BERT 训练基础镜像
+# 包含所有 PyTorch、Transformers 等训练所需的依赖
+
+FROM 192.168.68.95:31443/docker.io/library/python:3.10-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # 使用阿里云 pip 源加速
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 升级 pip
+RUN pip install --upgrade pip
+
+# 安装 PyTorch (CPU 版本，如需 GPU 版本可修改)
+# 使用阿里云镜像加速
+RUN pip install --no-cache-dir \
+    torch>=2.0.0 \
+    torchvision>=0.15.0 \
+    torchaudio>=2.0.0 \
+    --index-url https://mirrors.aliyun.com/pypi/simple/
+
+# 安装 Transformers 和 NLP 相关库
+RUN pip install --no-cache-dir \
+    transformers>=4.30.0 \
+    tokenizers>=0.13.0 \
+    datasets>=2.12.0 \
+    evaluate>=0.4.0 \
+    --index-url https://mirrors.aliyun.com/pypi/simple/
+
+# 安装数据处理和科学计算库
+RUN pip install --no-cache-dir \
+    pandas>=2.0.0 \
+    numpy>=1.24.0 \
+    scikit-learn>=1.3.0 \
+    scipy>=1.10.0 \
+    --index-url https://mirrors.aliyun.com/pypi/simple/
+
+# 安装 Web 服务相关库
+RUN pip install --no-cache-dir \
+    flask>=2.3.0 \
+    flask-cors>=4.0.0 \
+    requests>=2.31.0 \
+    axios \
+    --index-url https://mirrors.aliyun.com/pypi/simple/
+
+# 安装其他工具库
+RUN pip install --no-cache-dir \
+    tqdm>=4.65.0 \
+    pyyaml>=6.0 \
+    --index-url https://mirrors.aliyun.com/pypi/simple/
+
+# 创建模型缓存目录
+RUN mkdir -p /app/.cache/models /app/models
+
+# 设置 Hugging Face 缓存目录
+ENV HF_HOME=/app/.cache/models \
+    TRANSFORMERS_CACHE=/app/.cache/models
+
+# 验证安装
+RUN python3 -c "import torch; import transformers; import pandas; import flask; print('✓ All dependencies installed successfully')"
+
+# 设置默认命令
+CMD ["/bin/bash"]

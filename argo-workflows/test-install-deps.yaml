@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: test-pytorch-image
+  namespace: dev
+spec:
+  serviceAccountName: bert-workflow-sa
+  entrypoint: test
+  templates:
+    - name: test
+      container:
+        # 尝试不同的镜像路径
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
+        command: [python3, -c]
+        args:
+          - |
+            import subprocess
+            import sys
+
+            print("测试从 PyTorch 官方源安装...")
+
+            # 配置镜像源
+            subprocess.check_call([
+                sys.executable, "-m", "pip", "install", "torch",
+                "-i", "https://mirrors.aliyun.com/pypi/simple/",
+                "--trusted-host", "mirrors.aliyun.com",
+                "--quiet"
+            ])
+
+            import torch
+            print(f"✓ PyTorch {torch.__version__} 安装成功")
+            print(f"  CUDA 可用: {torch.cuda.is_available()}")
+
+            # 安装其他依赖
+            packages = ["transformers", "pandas", "scikit-learn", "flask", "flask-cors"]
+            for pkg in packages:
+                subprocess.check_call([
+                    sys.executable, "-m", "pip", "install", pkg,
+                    "-i", "https://mirrors.aliyun.com/pypi/simple/",
+                    "--trusted-host", "mirrors.aliyun.com",
+                    "--quiet"
+                ])
+                print(f"✓ {pkg} 安装成功")
+
+            print("\n✓ 所有依赖安装完成")
+        env:
+          - name: HTTP_PROXY
+            value: "http://192.168.68.95:25041"
+          - name: HTTPS_PROXY
+            value: "http://192.168.68.95:25041"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"

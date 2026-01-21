@@ -1,0 +1,220 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-bert-base-image
+  namespace: dev
+  labels:
+    app: bert-finetune
+    workflow-type: image-build
+  annotations:
+    description: "构建 BERT 训练基础镜像并推送到私有仓库"
+spec:
+  serviceAccountName: bert-workflow-sa
+  entrypoint: build-image-pipeline
+
+  arguments:
+    parameters:
+      - name: dockerfile_path
+        value: "/workspace/argo-workflows/Dockerfile.bert-training-base"
+      - name: image_registry
+        value: "192.168.68.95:31443"
+      - name: image_repository
+        value: "ai-base/bert-training"
+      - name: image_tag
+        value: "v1.0"
+
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace-volume
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+  templates:
+    # 1. 拉取源码
+    - name: checkout-source
+      inputs:
+        parameters:
+          - name: repo_url
+          - name: branch
+      outputs:
+        artifacts:
+          - name: source-code
+            path: /src
+      script:
+        image: 192.168.68.95:31443/docker.io/alpine/git:latest
+        command: [sh, -c]
+        source: |
+          set -e
+          echo "拉取源码..."
+          git clone --depth 1 --branch "{{inputs.parameters.branch}}" "{{inputs.parameters.repo_url}}" /src
+          echo "源码拉取完成"
+          ls -la /src
+        env:
+          - name: HTTPS_PROXY
+            value: "http://192.168.68.95:25041"
+          - name: HTTP_PROXY
+            value: "http://192.168.68.95:25041"
+        volumeMounts:
+          - name: workspace-volume
+            mountPath: /src
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+
+    # 2. 使用 Kaniko 构建并推送镜像
+    - name: build-and-push-image
+      inputs:
+        parameters:
+          - name: dockerfile_path
+          - name: image_registry
+          - name: image_repository
+          - name: image_tag
+          - name: https_proxy
+        artifacts:
+          - name: source-code
+            path: /workspace
+      container:
+        image: 192.168.68.95:31443/gcr.io/kaniko-project/executor:latest
+        args:
+          - --dockerfile={{inputs.parameters.dockerfile_path}}
+          - --context=.
+          - --destination={{inputs.parameters.image_registry}}/{{inputs.parameters.image_repository}}:{{inputs.parameters.image_tag}}
+          - --destination={{inputs.parameters.image_registry}}/{{inputs.parameters.image_repository}}:latest
+          - --cache=true
+          - --use-new-run
+          - --insecure
+          - --skip-tls-verify
+          - --skip-tls-verify-pull
+        env:
+          - name: HTTPS_PROXY
+            value: "{{inputs.parameters.https_proxy}}"
+          - name: HTTP_PROXY
+            value: "{{inputs.parameters.https_proxy}}"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+    # 3. 验证镜像
+    - name: verify-image
+      inputs:
+        parameters:
+          - name: image_registry
+          - name: image_repository
+          - name: image_tag
+      container:
+        image: "{{inputs.parameters.image_registry}}/{{inputs.parameters.image_repository}}:{{inputs.parameters.image_tag}}"
+        command: [python3, -c]
+        args:
+          - |
+            import sys
+            print("=" * 50)
+            print("验证镜像依赖")
+            print("=" * 50)
+
+            try:
+                import torch
+                print(f"✓ PyTorch: {torch.__version__}")
+                print(f"  CUDA 可用: {torch.cuda.is_available()}")
+            except ImportError as e:
+                print(f"✗ PyTorch 导入失败: {e}")
+                sys.exit(1)
+
+            try:
+                import transformers
+                print(f"✓ Transformers: {transformers.__version__}")
+            except ImportError as e:
+                print(f"✗ Transformers 导入失败: {e}")
+                sys.exit(1)
+
+            try:
+                import pandas
+                print(f"✓ Pandas: {pandas.__version__}")
+            except ImportError as e:
+                print(f"✗ Pandas 导入失败: {e}")
+                sys.exit(1)
+
+            try:
+                import flask
+                print(f"✓ Flask: {flask.__version__}")
+            except ImportError as e:
+                print(f"✗ Flask 导入失败: {e}")
+                sys.exit(1)
+
+            try:
+                import sklearn
+                print(f"✓ Scikit-learn: {sklearn.__version__}")
+            except ImportError as e:
+                print(f"✗ Scikit-learn 导入失败: {e}")
+                sys.exit(1)
+
+            print("\n" + "=" * 50)
+            print("✓ 所有依赖验证通过")
+            print("=" * 50)
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+    # 主 Pipeline
+    - name: build-image-pipeline
+      inputs:
+        parameters:
+          - name: dockerfile_path
+          - name: image_registry
+          - name: image_repository
+          - name: image_tag
+      steps:
+        # 步骤1: 拉取源码
+        - - name: checkout
+            template: checkout-source
+            arguments:
+              parameters:
+                - name: repo_url
+                  value: "https://github.com/fyl080801/intent-bert.git"
+                - name: branch
+                  value: "configlabels"
+
+        # 步骤2: 构建并推送镜像
+        - - name: build-push
+            template: build-and-push-image
+            arguments:
+              parameters:
+                - name: dockerfile_path
+                  value: "{{inputs.parameters.dockerfile_path}}"
+                - name: image_registry
+                  value: "{{inputs.parameters.image_registry}}"
+                - name: image_repository
+                  value: "{{inputs.parameters.image_repository}}"
+                - name: image_tag
+                  value: "{{inputs.parameters.image_tag}}"
+                - name: https_proxy
+                  value: "http://192.168.68.95:25041"
+              artifacts:
+                - name: source-code
+                  from: "{{steps.checkout.outputs.artifacts.source-code}}"
+
+        # 步骤3: 验证镜像
+        - - name: verify
+            template: verify-image
+            arguments:
+              parameters:
+                - name: image_registry
+                  value: "{{inputs.parameters.image_registry}}"
+                - name: image_repository
+                  value: "{{inputs.parameters.image_repository}}"
+                - name: image_tag
+                  value: "{{inputs.parameters.image_tag}}"

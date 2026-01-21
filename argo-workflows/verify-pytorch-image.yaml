@@ -1,0 +1,70 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-bert-base-image
+  namespace: dev
+  labels:
+    app: bert-finetune
+spec:
+  serviceAccountName: bert-workflow-sa
+  entrypoint: build-image
+  activeDeadlineSeconds: 3600
+
+  arguments:
+    parameters:
+      - name: https_proxy
+        value: "http://192.168.68.95:25041"
+
+  templates:
+    - name: build-image
+      container:
+        # 直接从 PyTorch 官方镜像拉取，它已经包含了所有依赖
+        image: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+        command: [sh, -c]
+        args:
+          - |
+            echo "=========================================="
+            echo "验证 PyTorch 镜像"
+            echo "=========================================="
+
+            python3 -c "
+            import torch
+            import transformers
+            import pandas
+            import flask
+            import sklearn
+
+            print('✓ PyTorch 版本:', torch.__version__)
+            print('✓ CUDA 可用:', torch.cuda.is_available())
+            print('✓ Transformers 版本:', transformers.__version__)
+            print('✓ Pandas 版本:', pandas.__version__)
+            print('✓ Flask 版本:', flask.__version__)
+            print('✓ Scikit-learn 版本:', sklearn.__version__)
+            print('')
+            print('✓ 所有依赖已验证通过!')
+            "
+
+            echo ""
+            echo "=========================================="
+            echo "镜像信息:"
+            echo "  基础镜像: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
+            echo "  此镜像已包含所有训练所需依赖"
+            echo ""
+            echo "使用方法:"
+            echo "  在 bert-training-and-deployment.yaml 中替换镜像为:"
+            echo "  image: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
+            echo "  或推送到私有仓库:"
+            echo "  image: 192.168.68.95:31443/pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
+            echo "=========================================="
+        env:
+          - name: HTTP_PROXY
+            value: "{{workflow.parameters.https_proxy}}"
+          - name: HTTPS_PROXY
+            value: "{{workflow.parameters.https_proxy}}"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"

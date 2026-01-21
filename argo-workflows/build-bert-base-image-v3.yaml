@@ -1,0 +1,298 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-bert-base-image
+  namespace: dev
+  labels:
+    app: bert-finetune
+    workflow-type: image-build
+  annotations:
+    description: "在容器中安装依赖并提交为新镜像"
+spec:
+  serviceAccountName: bert-workflow-sa
+  entrypoint: build-image-pipeline
+  activeDeadlineSeconds: 3600
+
+  arguments:
+    parameters:
+      - name: base_image
+        value: "192.168.68.95:31443/docker.io/library/python:3.10-slim"
+      - name: target_image_registry
+        value: "192.168.68.95:31443"
+      - name: target_image_repository
+        value: "ai-base/bert-training"
+      - name: image_tag
+        value: "v1.0"
+      - name: https_proxy
+        value: "http://192.168.68.95:25041"
+
+  templates:
+    # 安装依赖并保存为 tar
+    - name: install-dependencies
+      container:
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
+        command: [bash, -c]
+        args:
+          - |
+            set -e
+
+            echo "=========================================="
+            echo "安装 Python 依赖包"
+            echo "=========================================="
+
+            # 配置代理
+            export HTTP_PROXY="{{workflow.parameters.https_proxy}}"
+            export HTTPS_PROXY="{{workflow.parameters.https_proxy}}"
+            export PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+            export PIP_TRUSTED_HOST=mirrors.aliyun.com
+
+            # 升级 pip
+            pip install --upgrade pip
+
+            echo "安装 PyTorch (这需要几分钟)..."
+            pip install --no-cache-dir torch>=2.0.0 torchvision>=0.15.0 torchaudio>=2.0.0
+
+            echo "✓ PyTorch 安装完成"
+
+            echo "安装 Transformers..."
+            pip install --no-cache-dir transformers>=4.30.0 tokenizers>=0.13.0
+
+            echo "✓ Transformers 安装完成"
+
+            echo "安装数据处理库..."
+            pip install --no-cache-dir pandas>=2.0.0 numpy>=1.24.0 scikit-learn>=1.3.0 scipy>=1.10.0
+
+            echo "✓ 数据处理库安装完成"
+
+            echo "安装 Web 服务库..."
+            pip install --no-cache-dir flask>=2.3.0 flask-cors>=4.0.0 requests>=2.31.0
+
+            echo "✓ Web 服务库安装完成"
+
+            echo "安装其他工具..."
+            pip install --no-cache-dir tqdm>=4.65.0 pyyaml>=6.0
+
+            echo "✓ 所有依赖安装完成"
+
+            # 验证安装
+            python3 -c "
+            import torch
+            import transformers
+            import pandas
+            import flask
+            print('✓ 所有依赖验证通过')
+            "
+
+            echo ""
+            echo "=========================================="
+            echo "依赖安装完成，准备打包"
+            echo "=========================================="
+
+            # 打包 Python 环境到 tar
+            cd /
+            tar czf /tmp/python-env.tar.gz \
+                usr/local/lib/python3.10/site-packages/ \
+                usr/local/bin/ 2>/dev/null || true
+
+            ls -lh /tmp/python-env.tar.gz
+        volumeMounts:
+          - name: workspace
+            mountPath: /workspace
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+
+    # 使用 docker commit 方式创建镜像
+    - name: create-image-from-container
+      inputs:
+        parameters:
+          - name: base_image
+          - name: target_image
+          - name: https_proxy
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      container:
+        image: 192.168.68.95:31443/docker.io/library/alpine:latest
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+
+            echo "=========================================="
+            echo "安装 Docker CLI"
+            echo "=========================================="
+
+            # 安装 docker CLI
+            apk add --no-cache docker
+
+            echo "✓ Docker CLI 安装完成"
+
+            # 配置代理
+            export HTTP_PROXY="{{inputs.parameters.https_proxy}}"
+            export HTTPS_PROXY="{{inputs.parameters.https_proxy}}"
+
+            TARGET_IMAGE="{{inputs.parameters.target_image}}"
+            BASE_IMAGE="{{inputs.parameters.base_image}}"
+
+            echo "=========================================="
+            echo "启动容器并安装依赖"
+            echo "=========================================="
+
+            # 启动容器
+            CONTAINER_ID=$(docker run -d \
+              -e HTTP_PROXY="{{inputs.parameters.https_proxy}}" \
+              -e HTTPS_PROXY="{{inputs.parameters.https_proxy}}" \
+              -e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+              -e PIP_TRUSTED_HOST=mirrors.aliyun.com \
+              -w /app \
+              $BASE_IMAGE \
+              sleep 3600)
+
+            echo "容器 ID: $CONTAINER_ID"
+
+            echo "安装系统依赖..."
+            docker exec $CONTAINER_ID bash -c "
+              apt-get update && \
+              apt-get install -y --no-install-recommends git curl && \
+              rm -rf /var/lib/apt/lists/*
+            "
+
+            echo "升级 pip..."
+            docker exec $CONTAINER_ID pip install --upgrade pip
+
+            echo "安装 PyTorch..."
+            docker exec $CONTAINER_ID pip install --no-cache-dir \
+              torch>=2.0.0 torchvision>=0.15.0 torchaudio>=2.0.0
+
+            echo "安装 Transformers..."
+            docker exec $CONTAINER_ID pip install --no-cache-dir \
+              transformers>=4.30.0 tokenizers>=0.13.0
+
+            echo "安装数据处理库..."
+            docker exec $CONTAINER_ID pip install --no-cache-dir \
+              pandas>=2.0.0 numpy>=1.24.0 scikit-learn>=1.3.0 scipy>=1.10.0
+
+            echo "安装 Web 服务库..."
+            docker exec $CONTAINER_ID pip install --no-cache-dir \
+              flask>=2.3.0 flask-cors>=4.0.0 requests>=2.31.0
+
+            echo "安装其他工具..."
+            docker exec $CONTAINER_ID pip install --no-cache-dir \
+              tqdm>=4.65.0 pyyaml>=6.0
+
+            echo "创建目录..."
+            docker exec $CONTAINER_ID mkdir -p /app/.cache/models /app/models
+
+            echo "验证安装..."
+            docker exec $CONTAINER_ID python3 -c "
+            import torch
+            import transformers
+            import pandas
+            import flask
+            print('✓ All dependencies verified')
+            "
+
+            echo "=========================================="
+            echo "提交镜像"
+            echo "=========================================="
+
+            # 提交为新镜像
+            docker commit $CONTAINER_ID $TARGET_IMAGE
+
+            # 停止并删除容器
+            docker stop $CONTAINER_ID
+            docker rm $CONTAINER_ID
+
+            echo "=========================================="
+            echo "推送镜像到仓库"
+            echo "=========================================="
+
+            # 推送镜像
+            docker push $TARGET_IMAGE
+
+            echo ""
+            echo "✓ 镜像构建并推送成功: $TARGET_IMAGE"
+        env:
+          - name: HTTP_PROXY
+            value: "{{inputs.parameters.https_proxy}}"
+          - name: HTTPS_PROXY
+            value: "{{inputs.parameters.https_proxy}}"
+        securityContext:
+          privileged: true
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+
+    # 主 Pipeline
+    - name: build-image-pipeline
+      inputs:
+        parameters:
+          - name: base_image
+          - name: target_image_registry
+          - name: target_image_repository
+          - name: image_tag
+          - name: https_proxy
+      steps:
+        # 构建并推送镜像
+        - - name: build-push
+            template: create-image-from-container
+            arguments:
+              parameters:
+                - name: base_image
+                  value: "{{inputs.parameters.base_image}}"
+                - name: target_image
+                  value: "{{inputs.parameters.target_image_registry}}/{{inputs.parameters.target_image_repository}}:{{inputs.parameters.image_tag}}"
+                - name: https_proxy
+                  value: "{{inputs.parameters.https_proxy}}"
+
+        # 打印完成信息
+        - - name: completion
+            template: print-completion
+            arguments:
+              parameters:
+                - name: image_name
+                  value: "{{inputs.parameters.target_image_registry}}/{{inputs.parameters.target_image_repository}}"
+                - name: image_tag
+                  value: "{{inputs.parameters.image_tag}}"
+
+    # 打印完成信息
+    - name: print-completion
+      inputs:
+        parameters:
+          - name: image_name
+          - name: image_tag
+      container:
+        image: 192.168.68.95:31443/docker.io/library/alpine:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo ""
+            echo "=========================================="
+            echo "✓ BERT 训练基础镜像构建完成"
+            echo "=========================================="
+            echo ""
+            echo "镜像信息:"
+            echo "  仓库: {{inputs.parameters.image_name}}"
+            echo "  标签: {{inputs.parameters.image_tag}}"
+            echo "  完整: {{inputs.parameters.image_name}}:{{inputs.parameters.image_tag}}"
+            echo ""
+            echo "使用方法:"
+            echo "  更新 bert-training-and-deployment.yaml 中的镜像为:"
+            echo "  image: {{inputs.parameters.image_name}}:{{inputs.parameters.image_tag}}"
+            echo ""
+            echo "=========================================="
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"

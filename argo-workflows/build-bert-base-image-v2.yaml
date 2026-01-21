@@ -1,0 +1,254 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: build-bert-base-image
+  namespace: dev
+  labels:
+    app: bert-finetune
+    workflow-type: image-build
+  annotations:
+    description: "使用 Buildah 在集群内构建 BERT 训练基础镜像并推送到私有仓库"
+spec:
+  serviceAccountName: bert-workflow-sa
+  entrypoint: build-image-pipeline
+  activeDeadlineSeconds: 3600  # 1小时超时
+
+  arguments:
+    parameters:
+      - name: base_image
+        value: "192.168.68.95:31443/docker.io/library/python:3.10-slim"
+      - name: target_image_registry
+        value: "192.168.68.95:31443"
+      - name: target_image_repository
+        value: "ai-base/bert-training"
+      - name: image_tag
+        value: "v1.0"
+      - name: https_proxy
+        value: "http://192.168.68.95:25041"
+
+  templates:
+    # 使用 Buildah 构建镜像
+    - name: build-with-buildah
+      inputs:
+        parameters:
+          - name: base_image
+          - name: target_image
+          - name: https_proxy
+      container:
+        image: 192.168.68.95:31443/docker.io/library/alpine:latest
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+
+            echo "=========================================="
+            echo "安装 Buildah"
+            echo "=========================================="
+
+            # 安装 buildah
+            apk add --no-cache buildah git
+
+            echo "✓ Buildah 安装完成"
+
+            # 配置 Buildah 使用不安全的 registry 和 vfs 驱动
+            export BUILDAH_ISOLATION=chroot
+            export BUILDAH_LAYERS=true
+            export STORAGE_DRIVER=vfs
+            # 禁用网络
+            export _BUILDAH_NETWORK_MODE=none
+
+            # 配置代理
+            export HTTP_PROXY="{{inputs.parameters.https_proxy}}"
+            export HTTPS_PROXY="{{inputs.parameters.https_proxy}}"
+
+            echo "=========================================="
+            echo "开始构建镜像"
+            echo "=========================================="
+
+            TARGET_IMAGE="{{inputs.parameters.target_image}}"
+
+            # 使用 buildah 构建，禁用网络
+            CONTAINER_ID=$(buildah from --network none "{{inputs.parameters.base_image}}")
+
+            echo "容器 ID: $CONTAINER_ID"
+
+            # 配置工作目录和环境变量
+            buildah config --workingdir /app $CONTAINER_ID
+            buildah config --env PYTHONUNBUFFERED=1 $CONTAINER_ID
+            buildah config --env PYTHONDONTWRITEBYTECODE=1 $CONTAINER_ID
+            buildah config --env PIP_NO_CACHE_DIR=1 $CONTAINER_ID
+            buildah config --env PIP_DISABLE_PIP_VERSION_CHECK=1 $CONTAINER_ID
+            buildah config --env PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ $CONTAINER_ID
+            buildah config --env PIP_TRUSTED_HOST=mirrors.aliyun.com $CONTAINER_ID
+            buildah config --env HF_HOME=/app/.cache/models $CONTAINER_ID
+            buildah config --env TRANSFORMERS_CACHE=/app/.cache/models $CONTAINER_ID
+
+            echo "✓ 基础配置完成"
+
+            # 安装系统依赖
+            echo "安装系统依赖..."
+            buildah run $CONTAINER_ID -- sh -c "
+                apt-get update && \
+                apt-get install -y --no-install-recommends git curl && \
+                rm -rf /var/lib/apt/lists/* && \
+                pip install --upgrade pip
+            "
+
+            # 安装 PyTorch
+            echo "安装 PyTorch (这可能需要几分钟)..."
+            buildah run $CONTAINER_ID -- pip install --no-cache-dir \
+                torch>=2.0.0 \
+                torchvision>=0.15.0 \
+                torchaudio>=2.0.0
+
+            echo "✓ PyTorch 安装完成"
+
+            # 安装 Transformers
+            echo "安装 Transformers..."
+            buildah run $CONTAINER_ID -- pip install --no-cache-dir \
+                transformers>=4.30.0 \
+                tokenizers>=0.13.0 \
+                datasets>=2.12.0 \
+                evaluate>=0.4.0
+
+            echo "✓ Transformers 安装完成"
+
+            # 安装数据处理库
+            echo "安装数据处理库..."
+            buildah run $CONTAINER_ID -- pip install --no-cache-dir \
+                pandas>=2.0.0 \
+                numpy>=1.24.0 \
+                scikit-learn>=1.3.0 \
+                scipy>=1.10.0
+
+            echo "✓ 数据处理库安装完成"
+
+            # 安装 Web 服务库
+            echo "安装 Web 服务库..."
+            buildah run $CONTAINER_ID -- pip install --no-cache-dir \
+                flask>=2.3.0 \
+                flask-cors>=4.0.0 \
+                requests>=2.31.0
+
+            echo "✓ Web 服务库安装完成"
+
+            # 安装工具库
+            buildah run $CONTAINER_ID -- pip install --no-cache-dir \
+                tqdm>=4.65.0 \
+                pyyaml>=6.0
+
+            echo "✓ 所有依赖安装完成"
+
+            # 创建目录
+            buildah run $CONTAINER_ID -- mkdir -p /app/.cache/models /app/models
+
+            # 设置默认命令
+            buildah config --cmd /bin/bash $CONTAINER_ID
+
+            # 验证安装
+            echo "验证安装..."
+            buildah run $CONTAINER_ID -- python3 -c "
+                import torch
+                import transformers
+                import pandas
+                import flask
+                print('✓ All dependencies verified')
+            "
+
+            echo "=========================================="
+            echo "提交镜像"
+            echo "=========================================="
+
+            # 提交容器为镜像
+            buildah commit --format docker $CONTAINER_ID $TARGET_IMAGE
+
+            echo "=========================================="
+            echo "推送镜像到仓库"
+            echo "=========================================="
+
+            # 推送镜像
+            buildah push --digestfile /dev/null --tls-verify=false $TARGET_IMAGE
+
+            echo ""
+            echo "=========================================="
+            echo "✓ 镜像构建并推送成功!"
+            echo "镜像: $TARGET_IMAGE"
+            echo "=========================================="
+        env:
+          - name: HTTP_PROXY
+            value: "{{inputs.parameters.https_proxy}}"
+          - name: HTTPS_PROXY
+            value: "{{inputs.parameters.https_proxy}}"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+
+    # 主 Pipeline
+    - name: build-image-pipeline
+      inputs:
+        parameters:
+          - name: base_image
+          - name: target_image_registry
+          - name: target_image_repository
+          - name: image_tag
+          - name: https_proxy
+      steps:
+        # 构建并推送镜像
+        - - name: build-push
+            template: build-with-buildah
+            arguments:
+              parameters:
+                - name: base_image
+                  value: "{{inputs.parameters.base_image}}"
+                - name: target_image
+                  value: "{{inputs.parameters.target_image_registry}}/{{inputs.parameters.target_image_repository}}:{{inputs.parameters.image_tag}}"
+                - name: https_proxy
+                  value: "{{inputs.parameters.https_proxy}}"
+
+        # 打印完成信息
+        - - name: completion-message
+            template: print-completion
+            arguments:
+              parameters:
+                - name: image_name
+                  value: "{{inputs.parameters.target_image_registry}}/{{inputs.parameters.target_image_repository}}"
+                - name: image_tag
+                  value: "{{inputs.parameters.image_tag}}"
+
+    # 打印完成信息
+    - name: print-completion
+      inputs:
+        parameters:
+          - name: image_name
+          - name: image_tag
+      container:
+        image: 192.168.68.95:31443/docker.io/library/alpine:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo ""
+            echo "=========================================="
+            echo "✓ 基础镜像构建完成"
+            echo "=========================================="
+            echo ""
+            echo "镜像信息:"
+            echo "  仓库: {{inputs.parameters.image_name}}"
+            echo "  标签: {{inputs.parameters.image_tag}}"
+            echo "  完整: {{inputs.parameters.image_name}}:{{inputs.parameters.image_tag}}"
+            echo ""
+            echo "使用方法:"
+            echo "  更新工作流中的镜像引用为:"
+            echo "  image: {{inputs.parameters.image_name}}:{{inputs.parameters.image_tag}}"
+            echo ""
+            echo "=========================================="
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"

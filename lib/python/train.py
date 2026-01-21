@@ -344,7 +344,7 @@ def main():
         learning_rate=args.learning_rate,
         logging_dir=f'{args.output_dir}/logs',
         logging_steps=100,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=500,
         save_strategy="steps",
         save_steps=500,

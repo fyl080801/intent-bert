@@ -334,7 +334,7 @@ spec:
           persistentVolumeClaim:
             claimName: "{{workflow.parameters.pvc_name}}"
       container:
-        image: 192.168.68.95:31443/docker.io/pytorch/pytorch:2.1.2-cuda11.8-cudnn8-runtime
+        image: 192.168.68.95:31443/docker.io/pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
         command: [bash, -c]
         args:
           - |

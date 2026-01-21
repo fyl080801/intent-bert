@@ -17,8 +17,8 @@ from typing import Dict, Any, Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 # 导入不同的训练器和模型
-from lib.python.train import main as train_fixed_main
-from lib.python.train_dynamic import main as train_dynamic_main
+from train import main as train_fixed_main
+from train_dynamic import main as train_dynamic_main
 
 
 class DatasetConfigLoader:

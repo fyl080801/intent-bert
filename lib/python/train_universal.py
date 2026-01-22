@@ -215,8 +215,15 @@ class UniversalTrainer:
             tokenizer = AutoTokenizer.from_pretrained(model_name)
 
             def preprocess_function(examples):
+                # 确保输入是字符串列表
+                texts = examples[text_column]
+                if not isinstance(texts, list):
+                    texts = [texts]
+                # 确保所有元素都是字符串
+                texts = [str(t) if not isinstance(t, str) else t for t in texts]
+
                 return tokenizer(
-                    examples[text_column],
+                    texts,
                     truncation=True,
                     max_length=kwargs.get('max_length', 128),
                     padding=False

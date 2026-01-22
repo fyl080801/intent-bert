@@ -154,7 +154,7 @@ read -p "是否使用默认配置? (Y/n): " USE_DEFAULT
 if [[ ! $USE_DEFAULT =~ ^[Nn]$ ]]; then
     # 使用默认配置
     BRANCH="main"
-    MODEL_NAME="bert-base-chinese"
+    MODEL_NAME="hfl/chinese-roberta-wwm-ext"
     BATCH_SIZE="16"
     NUM_EPOCHS="5"
     LEARNING_RATE="2e-5"
@@ -167,7 +167,7 @@ else
     BRANCH=${BRANCH:-"main"}
     
     read -p "模型名称 (默认: bert-base-chinese): " MODEL_NAME
-    MODEL_NAME=${MODEL_NAME:-"bert-base-chinese"}
+    MODEL_NAME=${MODEL_NAME:-"hfl/chinese-roberta-wwm-ext"}
     
     read -p "批次大小 (默认: 16): " BATCH_SIZE
     BATCH_SIZE=${BATCH_SIZE:-"16"}

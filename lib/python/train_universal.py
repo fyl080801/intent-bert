@@ -107,7 +107,7 @@ class UniversalTrainer:
         args = [
             '--train_data', data_paths['train'],
             '--val_data', data_paths['validation'],
-            '--model_name', kwargs.get('model_name', 'bert-base-chinese'),
+            '--model_name', kwargs.get('model_name', 'hfl/chinese-roberta-wwm-ext'),
             '--output_dir', kwargs.get('output_dir', 'models_fixed'),
             '--batch_size', str(kwargs.get('batch_size', 16)),
             '--num_epochs', str(kwargs.get('num_epochs', 5)),
@@ -144,7 +144,7 @@ class UniversalTrainer:
             '--train_data', data_paths['train'],
             '--val_data', data_paths['validation'],
             '--hierarchy_config', config_path,
-            '--model_name', kwargs.get('model_name', 'bert-base-chinese'),
+            '--model_name', kwargs.get('model_name', 'hfl/chinese-roberta-wwm-ext'),
             '--output_dir', kwargs.get('output_dir', 'models_dynamic'),
             '--batch_size', str(kwargs.get('batch_size', 16)),
             '--num_epochs', str(kwargs.get('num_epochs', 5)),
@@ -198,7 +198,7 @@ class UniversalTrainer:
             text_column = dataset_config.get('text_column', 'text')
             label_column = dataset_config['label_columns'][0]
             num_labels = dataset_config.get('num_labels', 2)
-            model_name = kwargs.get('model_name', 'bert-base-chinese')
+            model_name = kwargs.get('model_name', 'hfl/chinese-roberta-wwm-ext')
 
             # 加载数据
             train_df = pd.read_csv(data_paths['train'])

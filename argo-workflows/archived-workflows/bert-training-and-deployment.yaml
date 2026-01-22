@@ -45,7 +45,7 @@ spec:
 
       # 训练超参数
       - name: model_name
-        value: "bert-base-chinese"
+        value: "hfl/chinese-roberta-wwm-ext"
       - name: batch_size
         value: "16"
       - name: num_epochs

@@ -71,7 +71,7 @@ data:
   workflow-defaults.yaml: |
     repo_url: "https://github.com/fyl080801/intent-bert.git"
     branch: "main"
-    model_name: "bert-base-chinese"
+    model_name: "hfl/chinese-roberta-wwm-ext"
     batch_size: "16"
     num_epochs: "5"
     learning_rate: "2e-5"

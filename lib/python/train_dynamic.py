@@ -263,7 +263,7 @@ def main():
                         help='验证数据路径')
     parser.add_argument('--hierarchy_config', type=str, default='datasets/hierarchy_config.json',
                         help='层级配置文件路径')
-    parser.add_argument('--model_name', type=str, default='bert-base-chinese',
+    parser.add_argument('--model_name', type=str, default='hfl/chinese-roberta-wwm-ext',
                         help='预训练模型名称')
     parser.add_argument('--output_dir', type=str, default='models_dynamic',
                         help='模型输出目录')

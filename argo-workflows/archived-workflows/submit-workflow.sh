@@ -20,7 +20,7 @@ IMAGE_TAG="latest"
 # 训练参数默认值
 TRAIN_DATA_PATH="datasets/financial_intent_dataset.csv"
 VAL_DATA_PATH="datasets/financial_intent_validation.csv"
-MODEL_NAME="bert-base-chinese"
+MODEL_NAME="hfl/chinese-roberta-wwm-ext"
 BATCH_SIZE=16
 NUM_EPOCHS=5
 LEARNING_RATE="2e-5"

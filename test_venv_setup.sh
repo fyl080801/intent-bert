@@ -48,8 +48,8 @@ python -c "
 from transformers import BertTokenizer
 
 # 测试 tokenizer 下载
-tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
-print('   ✅ BERT Tokenizer 下载/加载成功')
+tokenizer = BertTokenizer.from_pretrained('hfl/chinese-roberta-wwm-ext')
+print('   ✅ RoBERTa Tokenizer 下载/加载成功')
 print(f'   ✅ 词汇表大小: {len(tokenizer)}')
 "
 echo ""

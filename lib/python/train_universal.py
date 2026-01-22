@@ -168,20 +168,41 @@ class UniversalTrainer:
             sys.argv = old_argv
 
     def _train_single_label(self, dataset_config: Dict, **kwargs) -> bool:
-        """执行单标签训练（需要实现 train_single_label.py）"""
-        print("注意: 单标签训练功能需要实现 train_single_label.py")
-        print("作为临时方案，使用标准的transformers训练...")
+        """执行单标签训练"""
+        from train_single_label import main as train_single_label_main
 
-        # TODO: 实现专用的单标签训练脚本
-        # 这里可以使用HuggingFace的Trainer API快速实现
         data_paths = dataset_config['data_paths']
+        text_column = dataset_config.get('text_column', 'sentence')
+        label_column = dataset_config.get('label_columns', ['label'])[0]
 
-        print(f"\n训练数据: {data_paths['train']}")
-        print(f"验证数据: {data_paths['validation']}")
-        print(f"标签数: {dataset_config.get('num_labels', 2)}")
+        # 构建参数
+        args = [
+            '--train_data', data_paths['train'],
+            '--val_data', data_paths['validation'],
+            '--model_name', kwargs.get('model_name', 'hfl/chinese-roberta-wwm-ext'),
+            '--output_dir', kwargs.get('output_dir', 'models_sentiment'),
+            '--batch_size', str(kwargs.get('batch_size', 32)),
+            '--num_epochs', str(kwargs.get('num_epochs', 3)),
+            '--learning_rate', str(kwargs.get('learning_rate', 2e-5)),
+            '--max_length', str(kwargs.get('max_length', 128)),
+            '--warmup_steps', str(kwargs.get('warmup_steps', 500)),
+            '--weight_decay', str(kwargs.get('weight_decay', 0.01)),
+            '--text_column', text_column,
+            '--label_column', label_column,
+        ]
 
-        # 临时使用简单的transformers训练
-        return self._train_with_transformers(dataset_config, **kwargs)
+        # 模拟命令行参数
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['train_single_label.py'] + args
+
+        try:
+            train_single_label_main()
+            return True
+        except SystemExit as e:
+            return e.code == 0
+        finally:
+            sys.argv = old_argv
 
     def _train_with_transformers(self, dataset_config: Dict, **kwargs) -> bool:
         """使用transformers库进行快速训练"""

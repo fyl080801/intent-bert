@@ -103,9 +103,12 @@ class UniversalTrainer:
         """执行固定层级训练"""
         data_paths = dataset_config['data_paths']
 
+        # 确定训练数据路径（增量训练时可能使用准备好的数据）
+        train_data = kwargs.get('prepared_train_data', data_paths['train'])
+
         # 构建参数
         args = [
-            '--train_data', data_paths['train'],
+            '--train_data', train_data,
             '--val_data', data_paths['validation'],
             '--model_name', kwargs.get('model_name', 'hfl/chinese-roberta-wwm-ext'),
             '--output_dir', kwargs.get('output_dir', 'models_fixed'),
@@ -116,6 +119,11 @@ class UniversalTrainer:
             '--warmup_steps', str(kwargs.get('warmup_steps', 500)),
             '--weight_decay', str(kwargs.get('weight_decay', 0.01)),
         ]
+
+        # 添加增量训练参数
+        base_model_path = kwargs.get('base_model_path', '')
+        if base_model_path:
+            args.extend(['--base_model_path', base_model_path])
 
         # 模拟命令行参数
         import sys
@@ -381,6 +389,19 @@ def main():
     parser.add_argument('--registry', type=str,
                        default='datasets/dataset_registry.json',
                        help='数据集注册表路径')
+
+    # 增量训练参数
+    parser.add_argument('--base_model_path', type=str, default='',
+                       help='基础模型路径，用于增量训练（空值表示从头训练）')
+    parser.add_argument('--old_train_data_path', type=str, default='',
+                       help='旧训练数据路径，用于数据采样')
+    parser.add_argument('--data_merge_strategy', type=str, default='new_only',
+                       choices=['sample', 'merge', 'new_only'],
+                       help='数据合并策略: sample(采样旧数据) | merge(全部合并) | new_only(仅新数据)')
+    parser.add_argument('--old_data_sample_ratio', type=float, default=0.3,
+                       help='旧数据采样比例 (0-1，默认0.3)')
+    parser.add_argument('--random_seed', type=int, default=42,
+                       help='随机种子，确保数据采样可复现（默认42）')
 
     # 工具参数
     parser.add_argument('--list_datasets', action='store_true',

@@ -288,6 +288,8 @@ def main():
                         help='预热步数')
     parser.add_argument('--weight_decay', type=float, default=0.01,
                         help='权重衰减')
+    parser.add_argument('--base_model_path', type=str, default='',
+                        help='基础模型路径，用于增量训练（空值表示从头训练）')
 
     args = parser.parse_args()
 
@@ -323,13 +325,55 @@ def main():
     print(f"验证批次: {len(val_dataloader)}")
 
     # 创建多任务BERT模型
-    print(f"\n初始化多任务BERT模型: {args.model_name}")
-    model = create_multitask_model(
-        model_name=args.model_name,
-        num_level1=len(encoders['level1']['classes']),
-        num_level2=len(encoders['level2']['classes']),
-        num_level3=len(encoders['level3']['classes'])
-    )
+    if args.base_model_path:
+        # 增量训练：从基础模型加载
+        print(f"\n📂 增量训练模式")
+        print(f"  加载基础模型: {args.base_model_path}")
+
+        # 检查基础模型是否存在
+        if not os.path.exists(args.base_model_path):
+            print(f"❌ 错误: 基础模型路径不存在: {args.base_model_path}")
+            sys.exit(1)
+
+        # 加载基础模型的标签编码器
+        base_encoders_path = os.path.join(args.base_model_path, 'label_encoders.json')
+        if os.path.exists(base_encoders_path):
+            with open(base_encoders_path, 'r', encoding='utf-8') as f:
+                base_encoders = json.load(f)
+            print(f"  ✓ 基础模型标签编码器已加载")
+
+            # 检查标签空间是否一致
+            if (len(encoders['level1']['classes']) != len(base_encoders['level1']['classes']) or
+                len(encoders['level2']['classes']) != len(base_encoders['level2']['classes']) or
+                len(encoders['level3']['classes']) != len(base_encoders['level3']['classes'])):
+                print(f"\n⚠️  警告: 新数据的标签空间与基础模型不同")
+                print(f"  基础模型: L1={len(base_encoders['level1']['classes'])}, "
+                      f"L2={len(base_encoders['level2']['classes'])}, "
+                      f"L3={len(base_encoders['level3']['classes'])}")
+                print(f"  新数据: L1={len(encoders['level1']['classes'])}, "
+                      f"L2={len(encoders['level2']['classes'])}, "
+                      f"L3={len(encoders['level3']['classes'])}")
+                print(f"  将使用新数据的标签空间重新初始化分类层\n")
+
+        # 使用基础模型路径
+        model = create_multitask_model(
+            model_name=args.base_model_path,
+            num_level1=len(encoders['level1']['classes']),
+            num_level2=len(encoders['level2']['classes']),
+            num_level3=len(encoders['level3']['classes'])
+        )
+        print(f"  ✓ 基础模型已加载并重新初始化分类层")
+    else:
+        # 从头训练
+        print(f"\n从头训练模式")
+        print(f"  初始化模型: {args.model_name}")
+        model = create_multitask_model(
+            model_name=args.model_name,
+            num_level1=len(encoders['level1']['classes']),
+            num_level2=len(encoders['level2']['classes']),
+            num_level3=len(encoders['level3']['classes'])
+        )
+
     model.to(device)
     print(f"模型已加载到设备: {device}")
 

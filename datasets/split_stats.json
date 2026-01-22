@@ -1,0 +1,40 @@
+{
+  "total_samples": 2000,
+  "v1_samples": 999,
+  "v2_samples": 1001,
+  "split_ratio": 0.5,
+  "stratify_column": "label_level1",
+  "random_seed": 42,
+  "label_distribution": {
+    "交易服务": {
+      "total": 306,
+      "v1": 153,
+      "v2": 145
+    },
+    "产品咨询": {
+      "total": 288,
+      "v1": 144,
+      "v2": 146
+    },
+    "信贷服务": {
+      "total": 361,
+      "v1": 180,
+      "v2": 187
+    },
+    "投资理财": {
+      "total": 532,
+      "v1": 266,
+      "v2": 278
+    },
+    "账户服务": {
+      "total": 297,
+      "v1": 148,
+      "v2": 140
+    },
+    "风险合规": {
+      "total": 216,
+      "v1": 108,
+      "v2": 105
+    }
+  }
+}

@@ -60,6 +60,57 @@
       "description": "京东商品评论情感二分类（正面/负面）",
       "languages": ["zh"],
       "created_at": "2024-01-01"
+    },
+    "financial_intent_incremental_v1": {
+      "name": "金融意图增量训练 V1（初始训练）",
+      "task_type": "hierarchical",
+      "label_type": "multi_level",
+      "level_config": "fixed",
+      "num_levels": 3,
+      "data_paths": {
+        "train": "datasets/financial_intent_incremental_v1/train.csv",
+        "validation": "datasets/financial_intent_incremental_v1/val.csv"
+      },
+      "config_path": "datasets/financial_intent_fixed/config.json",
+      "label_columns": ["label_level1", "label_level2", "label_level3"],
+      "text_column": "text",
+      "training_script": "train.py",
+      "model_class": "BertForMultiLabelClassification",
+      "description": "增量训练V1版本 - 初始训练集（999条），包含6大一级类别，用于训练基础模型",
+      "languages": ["zh"],
+      "created_at": "2025-01-22",
+      "split_info": {
+        "version": "v1",
+        "split_ratio": 0.5,
+        "train_samples": 999,
+        "val_samples": 300
+      }
+    },
+    "financial_intent_incremental_v2": {
+      "name": "金融意图增量训练 V2（增量数据）",
+      "task_type": "hierarchical",
+      "label_type": "multi_level",
+      "level_config": "fixed",
+      "num_levels": 3,
+      "data_paths": {
+        "train": "datasets/financial_intent_incremental_v2/train.csv",
+        "validation": "datasets/financial_intent_incremental_v2/val.csv"
+      },
+      "config_path": "datasets/financial_intent_fixed/config.json",
+      "label_columns": ["label_level1", "label_level2", "label_level3"],
+      "text_column": "text",
+      "training_script": "train.py",
+      "model_class": "BertForMultiLabelClassification",
+      "description": "增量训练V2版本 - 增量训练集（1001条），用于在V1模型基础上进行增量训练",
+      "languages": ["zh"],
+      "created_at": "2025-01-22",
+      "split_info": {
+        "version": "v2",
+        "split_ratio": 0.5,
+        "train_samples": 1001,
+        "val_samples": 300,
+        "base_model": "financial_intent_incremental_v1"
+      }
     }
   },
   "task_types": {

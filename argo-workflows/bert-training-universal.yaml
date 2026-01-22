@@ -478,6 +478,86 @@ spec:
             memory: "2Gi"
             cpu: "1000m"
 
+    # ==================== 5. 生成训练报告 ====================
+    - name: generate-training-report
+      inputs:
+        parameters:
+          - name: container_model_output_path
+          - name: dataset_name
+          - name: output_suffix
+          - name: workflow_uid
+      script:
+        image: 192.168.68.95:31443/docker.io/library/python:3.10-slim
+        command: [python3]
+        source: |
+          import json
+          import os
+          import sys
+          from datetime import datetime
+
+          print("=" * 70)
+          print("步骤5: 生成训练报告")
+          print("=" * 70)
+
+          model_path = "{{inputs.parameters.container_model_output_path}}"
+          dataset_name = "{{inputs.parameters.dataset_name}}"
+          workflow_uid = "{{inputs.parameters.workflow_uid}}"
+
+          # 设置环境变量供报告生成脚本使用
+          os.environ['WORKFLOW_UID'] = workflow_uid
+
+          # 添加 lib/python 到路径
+          lib_path = os.path.join(os.path.dirname(__file__), '..', 'lib', 'python')
+          if lib_path not in sys.path:
+              sys.path.insert(0, lib_path)
+
+          print(f"\n📝 开始生成训练报告...")
+          print(f"  模型路径: {model_path}")
+          print(f"  数据集: {dataset_name}")
+          print(f"  工作流UID: {workflow_uid}")
+
+          # 检查模型目录是否存在
+          if not os.path.exists(model_path):
+              print(f"\n❌ 错误: 模型目录不存在: {model_path}")
+              sys.exit(1)
+
+          # 检查训练配置文件
+          config_file = os.path.join(model_path, "training_config.json")
+          if not os.path.exists(config_file):
+              print(f"\n❌ 错误: 训练配置文件不存在: {config_file}")
+              print("   训练可能未完成，无法生成报告")
+              sys.exit(1)
+
+          # 导入报告生成器
+          try:
+              from generate_training_report import generate_report
+
+              # 生成报告
+              print("\n调用报告生成器...")
+              generate_report(model_path, dataset_name)
+
+              print("\n" + "=" * 70)
+              print("✅ 训练报告生成完成")
+              print("=" * 70)
+
+          except Exception as e:
+              print(f"\n❌ 生成报告时出错: {str(e)}")
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
+
+        volumeMounts:
+          - name: host-model-output
+            mountPath: "{{inputs.parameters.container_model_output_path}}"
+            readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
     # ==================== 主Pipeline ====================
     - name: universal-training-pipeline
       inputs:
@@ -584,4 +664,18 @@ spec:
                 - name: dataset_name
                   value: "{{inputs.parameters.dataset_name}}"
                 - name: output_suffix
+                  value: "{{inputs.parameters.output_suffix}}"
+
+        # 步骤5: 生成训练报告
+        - - name: generate-report
+            template: generate-training-report
+            arguments:
+              parameters:
+                - name: container_model_output_path
+                  value: "{{inputs.parameters.container_model_output_path}}"
+                - name: dataset_name
+                  value: "{{inputs.parameters.dataset_name}}"
+                - name: output_suffix
+                  value: "{{inputs.parameters.output_suffix}}"
+                - name: workflow_uid
                   value: "{{inputs.parameters.output_suffix}}"

@@ -1,0 +1,181 @@
+# BERT 推理服务部署配置
+# 使用训练好的模型提供推理服务
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bert-inference-config
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+data:
+  # 推理服务配置
+  inference_config.json: |
+    {
+      "model_name": "financial_intent_fixed",
+      "model_path": "/app/models",
+      "max_length": 128,
+      "batch_size": 8,
+      "device": "cpu"
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intent-bert-inference
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intent-bert
+      component: inference
+  template:
+    metadata:
+      labels:
+        app: intent-bert
+        component: inference
+        version: v1
+    spec:
+      # 调度到具有模型的节点
+      nodeName: fyl-workstation
+      runtimeClassName: nvidia
+      # 使用 hostPath 挂载训练好的模型和 emptyDir 存放源代码
+      volumes:
+        - name: models
+          hostPath:
+            path: /mnt/models/bert-output
+            type: Directory
+        - name: source-code
+          emptyDir: {}
+      initContainers:
+        - name: fetch-source
+          image: 192.168.68.95:31443/docker.io/alpine/git:latest
+          command:
+            - sh
+            - -c
+            - |
+              git clone --depth 1 --branch configlabels https://github.com/fyl080801/intent-bert.git /src
+              echo "Source code fetched"
+          volumeMounts:
+            - name: source-code
+              mountPath: /src
+          env:
+            - name: HTTPS_PROXY
+              value: "http://192.168.68.95:25041"
+            - name: HTTP_PROXY
+              value: "http://192.168.68.95:25041"
+      containers:
+        # Python 模型服务
+        - name: model-server
+          image: 192.168.68.95:31443/docker.io/pytorch/pytorch:2.2.0-cuda11.8-cudnn8-runtime
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: model-api
+              containerPort: 5000
+              protocol: TCP
+          env:
+            - name: PYTHONPATH
+              value: "/src/lib/python"
+            - name: MODEL_PATH
+              value: "/app/models/financial_intent_fixed-600e8423-73dd-47e4-9a50-067ecd484a0a"
+            - name: MODEL_NAME
+              value: "financial_intent_fixed"
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "5000"
+            - name: TRANSFORMERS_CACHE
+              value: "/app/.cache/models"
+            - name: HF_HOME
+              value: "/app/.cache/models"
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+          command:
+            - bash
+            - -c
+            - |
+              echo "Installing dependencies..."
+              pip install --no-cache-dir flask flask-cors scikit-learn pandas numpy transformers torch --index-url https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+              echo "Starting model server..."
+              cd /app/src
+              python3 /app/src/lib/python/model_server.py
+          volumeMounts:
+            - name: models
+              mountPath: /app/models
+              readOnly: true
+            - name: source-code
+              mountPath: /app/src
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intent-bert-inference-service
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+spec:
+  type: ClusterIP
+  ports:
+    - name: model-api
+      port: 5000
+      targetPort: 5000
+      protocol: TCP
+  selector:
+    app: intent-bert
+    component: inference
+
+---
+# NodePort Service for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: intent-bert-inference-nodeport
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+spec:
+  type: NodePort
+  ports:
+    - name: model-api
+      port: 5000
+      targetPort: 5000
+      protocol: TCP
+      nodePort: 30500
+  selector:
+    app: intent-bert
+    component: inference

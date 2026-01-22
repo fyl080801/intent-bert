@@ -1,0 +1,34 @@
+# BERT 推理服务 Ingress 配置
+# 域名: bert.fyl080801.uk
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: intent-bert-ingress
+  namespace: dev
+  labels:
+    app: intent-bert
+    component: inference
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: bert.fyl080801.uk
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: intent-bert-inference-service
+                port:
+                  number: 5000

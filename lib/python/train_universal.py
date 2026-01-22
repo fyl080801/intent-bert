@@ -257,6 +257,10 @@ class UniversalTrainer:
                 num_labels=num_labels
             )
 
+            # 设置问题类型，确保使用正确的损失函数
+            # 对于单标签分类（包括二分类），使用 single_label_classification
+            model.config.problem_type = "single_label_classification"
+
             # 训练参数
             training_args = TrainingArguments(
                 output_dir=kwargs.get('output_dir', 'models_single_label'),

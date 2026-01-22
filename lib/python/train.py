@@ -272,7 +272,7 @@ def main():
                         help='训练数据路径')
     parser.add_argument('--val_data', type=str, default='datasets/financial_intent_validation.csv',
                         help='验证数据路径')
-    parser.add_argument('--model_name', type=str, default='bert-base-chinese',
+    parser.add_argument('--model_name', type=str, default='hfl/chinese-roberta-wwm-ext',
                         help='预训练模型名称')
     parser.add_argument('--output_dir', type=str, default='models',
                         help='模型输出目录')
@@ -352,6 +352,7 @@ def main():
         metric_for_best_model="overall_accuracy",
         greater_is_better=True,
         report_to=None,  # 不使用wandb等
+        save_safetensors=False,  # 使用 PyTorch 原生格式，避免非连续张量问题
     )
 
     # 创建Trainer

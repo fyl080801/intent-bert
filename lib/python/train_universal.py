@@ -241,14 +241,14 @@ class UniversalTrainer:
                 remove_columns=val_dataset.column_names
             )
 
-            # 添加标签
+            # 添加标签（确保是整数类型）
             train_dataset = train_dataset.add_column(
                 'labels',
-                train_df[label_column].tolist()
+                train_df[label_column].astype(int).tolist()
             )
             val_dataset = val_dataset.add_column(
                 'labels',
-                val_df[label_column].tolist()
+                val_df[label_column].astype(int).tolist()
             )
 
             # 加载模型

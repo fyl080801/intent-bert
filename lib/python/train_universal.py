@@ -241,15 +241,12 @@ class UniversalTrainer:
                 remove_columns=val_dataset.column_names
             )
 
-            # 添加标签（确保是整数类型）
-            train_dataset = train_dataset.add_column(
-                'labels',
-                train_df[label_column].astype(int).tolist()
-            )
-            val_dataset = val_dataset.add_column(
-                'labels',
-                val_df[label_column].astype(int).tolist()
-            )
+            # 添加标签（确保是整数类型，处理缺失值）
+            train_labels = train_df[label_column].fillna(0).astype(int).tolist()
+            val_labels = val_df[label_column].fillna(0).astype(int).tolist()
+
+            train_dataset = train_dataset.add_column('labels', train_labels)
+            val_dataset = val_dataset.add_column('labels', val_labels)
 
             # 加载模型
             model = AutoModelForSequenceClassification.from_pretrained(
